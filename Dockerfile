@@ -21,9 +21,9 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w \
-      -X github.com/tlsentinel/tlsentinel/internal/version.Version=${VERSION} \
-      -X github.com/tlsentinel/tlsentinel/internal/version.Commit=${COMMIT} \
-      -X github.com/tlsentinel/tlsentinel/internal/version.BuildTime=${BUILD_TIME}" \
+      -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=${VERSION} \
+      -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Commit=${COMMIT} \
+      -X github.com/tlsentinel/tlsentinel-scanner/internal/version.BuildTime=${BUILD_TIME}" \
     -o /out/scanner ./cmd/scanner
 
 # ─── Stage 2: minimal runtime image ──────────────────────────────────────────
