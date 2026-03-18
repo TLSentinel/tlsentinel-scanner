@@ -1,0 +1,20 @@
+# Local development stack.
+#
+# Reads credentials from .env — copy .env.example and fill in values before
+# running for the first time.
+#
+# Usage:
+#   docker compose up -d            # start everything
+#   docker compose logs -f scanner  # tail scanner logs
+#   docker compose down             # stop and remove containers
+
+services:
+  scanner:
+    build:
+      context: ./tlsentinel-scanner
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      TLSENTINEL_API_URL: ${TLSENTINEL_API_URL:-http://server:8000}
+      TLSENTINEL_API_KEY: ${TLSENTINEL_API_KEY:-}
+    restart: unless-stopped
