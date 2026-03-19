@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -11,35 +11,32 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/tlsentinel/tlsentinel-scanner/internal"
+	"github.com/tlsentinel/tlsentinel-scanner/internal/logger"
+	"go.uber.org/zap"
 )
 
 func main() {
 	_ = godotenv.Load()
 
+	log, err := logger.Build()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialise logger: %v\n", err)
+		os.Exit(1)
+	}
+	zap.ReplaceGlobals(log)
+	defer log.Sync() //nolint:errcheck
+
 	apiURL := os.Getenv("TLSENTINEL_API_URL")
 	apiToken := os.Getenv("TLSENTINEL_API_TOKEN")
 
 	if apiURL == "" || apiToken == "" {
-		slog.Error("TLSENTINEL_API_URL and TLSENTINEL_API_TOKEN must be set")
-		os.Exit(1)
+		log.Fatal("TLSENTINEL_API_URL and TLSENTINEL_API_TOKEN must be set")
 	}
 
 	client := internal.NewAPIClient(apiURL, apiToken)
 
-	// Fetch initial config — fatal if unreachable on startup.
-	cfg, err := client.GetConfig()
-	if err != nil {
-		slog.Error("failed to fetch scanner config", "error", err)
-		os.Exit(1)
-	}
-	slog.Info("scanner started",
-		"id", cfg.ID,
-		"name", cfg.Name,
-		"interval_seconds", cfg.ScanIntervalSeconds,
-		"concurrency", cfg.ScanConcurrency,
-	)
-
-	// Set up graceful shutdown.
+	// Set up graceful shutdown before the retry loop so SIGTERM/SIGINT can
+	// interrupt a waiting scanner without needing a full scan interval.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -47,46 +44,102 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
-		slog.Info("received signal, shutting down", "signal", sig)
+		log.Info("received signal, shutting down", zap.String("signal", sig.String()))
 		cancel()
 	}()
 
-	for {
-		runScanCycle(ctx, client, cfg.ScanConcurrency)
+	// Fetch initial config — retry indefinitely if the API server is not yet
+	// reachable (e.g. scanner starts before the server in a compose stack).
+	const retryInterval = 15 * time.Second
+	cfg, err := client.GetConfig()
+	for err != nil {
+		log.Warn("API server unreachable, will retry",
+			zap.Error(err),
+			zap.Duration("retry_in", retryInterval),
+		)
+		select {
+		case <-ctx.Done():
+			log.Info("scanner stopped before initial config was fetched")
+			return
+		case <-time.After(retryInterval):
+		}
+		cfg, err = client.GetConfig()
+	}
+	log.Info("scanner started",
+		zap.String("id", cfg.ID),
+		zap.String("name", cfg.Name),
+		zap.Int("interval_seconds", cfg.ScanIntervalSeconds),
+		zap.Int("concurrency", cfg.ScanConcurrency),
+	)
 
-		// Re-fetch config so UI changes take effect without a restart.
+	// configPollInterval is how often the scanner checks for config changes
+	// while waiting between scan cycles.
+	const configPollInterval = 30 * time.Second
+
+	for {
+		runScanCycle(ctx, log, client, cfg.ScanConcurrency)
+
+		// Record when this cycle finished so the deadline is anchored to it.
+		cycleFinishedAt := time.Now()
+
+		// Refresh config immediately after the scan cycle.
 		if updated, err := client.GetConfig(); err != nil {
-			slog.Warn("failed to refresh config, keeping previous values", "error", err)
+			log.Warn("failed to refresh config, keeping previous values", zap.Error(err))
 		} else {
 			cfg = updated
 		}
 
-		select {
-		case <-ctx.Done():
-			slog.Info("scanner stopped")
-			return
-		case <-time.After(time.Duration(cfg.ScanIntervalSeconds) * time.Second):
+		// Wait for the next cycle, polling config every 30 s so that a
+		// shortened interval takes effect within the next poll tick rather
+		// than requiring the full old interval to elapse.
+		for {
+			deadline := cycleFinishedAt.Add(time.Duration(cfg.ScanIntervalSeconds) * time.Second)
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				break
+			}
+			sleep := configPollInterval
+			if remaining < sleep {
+				sleep = remaining
+			}
+			select {
+			case <-ctx.Done():
+				log.Info("scanner stopped")
+				return
+			case <-time.After(sleep):
+			}
+			if updated, err := client.GetConfig(); err != nil {
+				log.Warn("failed to refresh config, keeping previous values", zap.Error(err))
+			} else {
+				if updated.ScanIntervalSeconds != cfg.ScanIntervalSeconds {
+					log.Info("scan interval updated",
+						zap.Int("from_seconds", cfg.ScanIntervalSeconds),
+						zap.Int("to_seconds", updated.ScanIntervalSeconds),
+					)
+				}
+				cfg = updated
+			}
 		}
 	}
 }
 
 // runScanCycle fetches the host list and scans every host with bounded concurrency.
 // It blocks until all in-flight scans complete, then returns.
-func runScanCycle(ctx context.Context, client *internal.APIClient, concurrency int) {
+func runScanCycle(ctx context.Context, log *zap.Logger, client *internal.APIClient, concurrency int) {
 	if concurrency <= 0 {
 		concurrency = 5
 	}
 
 	hosts, err := client.GetHosts()
 	if err != nil {
-		slog.Error("failed to fetch hosts", "error", err)
+		log.Error("failed to fetch hosts", zap.Error(err))
 		return
 	}
 	if len(hosts) == 0 {
-		slog.Info("no hosts to scan")
+		log.Info("no hosts to scan")
 		return
 	}
-	slog.Info("starting scan cycle", "hosts", len(hosts))
+	log.Info("starting scan cycle", zap.Int("hosts", len(hosts)))
 
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
@@ -102,17 +155,21 @@ func runScanCycle(ctx context.Context, client *internal.APIClient, concurrency i
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			scanAndReport(ctx, client, host)
+			scanAndReport(ctx, log, client, host)
 		}(h)
 	}
 
 	wg.Wait()
-	slog.Info("scan cycle complete")
+	log.Info("scan cycle complete")
 }
 
 // scanAndReport scans a single host and posts the result back to the API.
-func scanAndReport(ctx context.Context, client *internal.APIClient, host internal.ScannerHost) {
-	log := slog.With("host_id", host.ID, "dns_name", host.DNSName, "port", host.Port)
+func scanAndReport(ctx context.Context, log *zap.Logger, client *internal.APIClient, host internal.ScannerHost) {
+	log = log.With(
+		zap.String("host_id", host.ID),
+		zap.String("dns_name", host.DNSName),
+		zap.Int("port", host.Port),
+	)
 
 	result := internal.ScanHost(host)
 
@@ -122,7 +179,7 @@ func scanAndReport(ctx context.Context, client *internal.APIClient, host interna
 	leafIngested := false
 	for i, pemData := range result.PEMs {
 		if err := client.IngestCertificate(pemData); err != nil {
-			log.Warn("failed to ingest certificate", "index", i, "error", err)
+			log.Warn("failed to ingest certificate", zap.Int("index", i), zap.Error(err))
 		} else if i == 0 {
 			leafIngested = true
 		}
@@ -141,16 +198,16 @@ func scanAndReport(ctx context.Context, client *internal.APIClient, host interna
 	}
 
 	if err := client.PostResult(host.ID, payload); err != nil {
-		log.Error("failed to post scan result", "error", err)
+		log.Error("failed to post scan result", zap.Error(err))
 		return
 	}
 
 	if result.Err != nil {
-		log.Warn("scan error", "error", *result.Err)
+		log.Warn("scan error", zap.String("error", *result.Err))
 	} else {
-		fingerprint := ""
+		fp := ""
 		if result.Fingerprint != nil {
-			fingerprint = *result.Fingerprint
+			fp = *result.Fingerprint
 		}
 		tlsVersion := ""
 		if result.TLSVersion != nil {
@@ -161,9 +218,9 @@ func scanAndReport(ctx context.Context, client *internal.APIClient, host interna
 			resolvedIP = *result.ResolvedIP
 		}
 		log.Info("scan successful",
-			"fingerprint", fingerprint,
-			"tls_version", tlsVersion,
-			"resolved_ip", resolvedIP,
+			zap.String("fingerprint", fp),
+			zap.String("tls_version", tlsVersion),
+			zap.String("resolved_ip", resolvedIP),
 		)
 	}
 
@@ -172,19 +229,19 @@ func scanAndReport(ctx context.Context, client *internal.APIClient, host interna
 	// probes (e.g. expired cert, wrong cert) and the profile data is useful.
 	tlsProfile := internal.ProbeTLSProfile(host)
 	if err := client.PostTLSProfile(host.ID, tlsProfile); err != nil {
-		log.Error("failed to post TLS profile", "error", err)
+		log.Error("failed to post TLS profile", zap.Error(err))
 		return
 	}
 
 	if tlsProfile.ScanError != nil {
-		log.Warn("TLS profile probe error", "error", *tlsProfile.ScanError)
+		log.Warn("TLS profile probe error", zap.String("error", *tlsProfile.ScanError))
 	} else {
 		log.Info("TLS profile posted",
-			"tls10", tlsProfile.TLS10,
-			"tls11", tlsProfile.TLS11,
-			"tls12", tlsProfile.TLS12,
-			"tls13", tlsProfile.TLS13,
-			"ciphers", len(tlsProfile.CipherSuites),
+			zap.Bool("tls10", tlsProfile.TLS10),
+			zap.Bool("tls11", tlsProfile.TLS11),
+			zap.Bool("tls12", tlsProfile.TLS12),
+			zap.Bool("tls13", tlsProfile.TLS13),
+			zap.Int("ciphers", len(tlsProfile.CipherSuites)),
 		)
 	}
 }
