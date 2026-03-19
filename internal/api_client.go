@@ -43,10 +43,13 @@ type ScannerHost struct {
 
 // ScanResultPayload mirrors models.ScanResultRequest.
 type ScanResultPayload struct {
-	ActiveFingerprint *string `json:"activeFingerprint"`
-	ResolvedIP        *string `json:"resolvedIp"`
-	TLSVersion        *string `json:"tlsVersion"`
-	Error             *string `json:"error"`
+	ActiveFingerprint *string  `json:"activeFingerprint"`
+	ResolvedIP        *string  `json:"resolvedIp"`
+	TLSVersion        *string  `json:"tlsVersion"`
+	Error             *string  `json:"error"`
+	// PEMs contains PEM-encoded certificates in chain order (leaf first).
+	// The server parses and upserts each one; re-sending known certs is safe.
+	PEMs              []string `json:"pems"`
 }
 
 // TLSProfilePayload mirrors models.TLSProfileIngestRequest.
@@ -122,21 +125,6 @@ func (c *APIClient) GetHosts() ([]ScannerHost, error) {
 		return nil, fmt.Errorf("decode hosts response: %w", err)
 	}
 	return hosts, nil
-}
-
-// IngestCertificate POSTs a PEM-encoded certificate to the ingest endpoint.
-func (c *APIClient) IngestCertificate(pemData string) error {
-	payload := map[string]string{"certificatePem": pemData}
-	resp, err := c.do("POST", "/api/v1/certificates", payload)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("POST /certificates: unexpected status %d", resp.StatusCode)
-	}
-	return nil
 }
 
 // PostResult sends a scan result for a host to the API.

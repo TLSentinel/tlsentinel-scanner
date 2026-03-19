@@ -173,28 +173,15 @@ func scanAndReport(ctx context.Context, log *zap.Logger, client *internal.APICli
 
 	result := internal.ScanHost(host)
 
-	// Ingest certificates into the API.
-	// Track whether the leaf cert (index 0) was stored — active_fingerprint is a
-	// foreign key into certificates, so we must not reference it if ingest failed.
-	leafIngested := false
-	for i, pemData := range result.PEMs {
-		if err := client.IngestCertificate(pemData); err != nil {
-			log.Warn("failed to ingest certificate", zap.Int("index", i), zap.Error(err))
-		} else if i == 0 {
-			leafIngested = true
-		}
-	}
-
-	fingerprint := result.Fingerprint
-	if !leafIngested {
-		fingerprint = nil
-	}
-
+	// Send PEMs to the server alongside the result — the server parses and
+	// upserts them under scanner-token auth, eliminating the need for a
+	// separate call to the JWT-protected /certificates endpoint.
 	payload := internal.ScanResultPayload{
-		ActiveFingerprint: fingerprint,
+		ActiveFingerprint: result.Fingerprint,
 		ResolvedIP:        result.ResolvedIP,
 		TLSVersion:        result.TLSVersion,
 		Error:             result.Err,
+		PEMs:              result.PEMs,
 	}
 
 	if err := client.PostResult(host.ID, payload); err != nil {
