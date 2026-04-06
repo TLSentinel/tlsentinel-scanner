@@ -262,9 +262,8 @@ func scanAndReportSAML(ctx context.Context, log *zap.Logger, client *internal.AP
 	result := internal.ScanSAML(endpoint)
 
 	payload := internal.SAMLResultPayload{
-		ActiveFingerprint: result.Fingerprint,
-		Error:             result.Err,
-		PEMs:              result.PEMs,
+		Error: result.Err,
+		Certs: result.Certs,
 	}
 
 	if err := client.PostSAMLResult(endpoint.ID, payload); err != nil {
@@ -275,13 +274,8 @@ func scanAndReportSAML(ctx context.Context, log *zap.Logger, client *internal.AP
 	if result.Err != nil {
 		log.Warn("SAML scan error", zap.String("error", *result.Err))
 	} else {
-		fp := ""
-		if result.Fingerprint != nil {
-			fp = *result.Fingerprint
-		}
 		log.Info("SAML scan successful",
-			zap.String("fingerprint", fp),
-			zap.Int("certs", len(result.PEMs)),
+			zap.Int("certs", len(result.Certs)),
 		)
 	}
 }
