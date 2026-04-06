@@ -52,6 +52,19 @@ type ScanResultPayload struct {
 	PEMs              []string `json:"pems"`
 }
 
+// ScannerSAMLEndpoint mirrors models.ScannerSAMLEndpoint.
+type ScannerSAMLEndpoint struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+// SAMLResultPayload mirrors models.SAMLScanResultRequest.
+type SAMLResultPayload struct {
+	ActiveFingerprint *string  `json:"activeFingerprint"`
+	Error             *string  `json:"error"`
+	PEMs              []string `json:"pems"`
+}
+
 // TLSProfilePayload mirrors models.TLSProfileIngestRequest.
 type TLSProfilePayload struct {
 	TLS10          bool     `json:"tls10"`
@@ -137,6 +150,39 @@ func (c *APIClient) PostResult(hostID string, result ScanResultPayload) error {
 
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("POST /probe/hosts/%s/result: unexpected status %d", hostID, resp.StatusCode)
+	}
+	return nil
+}
+
+// GetSAMLEndpoints returns the list of enabled SAML endpoints assigned to this scanner.
+func (c *APIClient) GetSAMLEndpoints() ([]ScannerSAMLEndpoint, error) {
+	resp, err := c.do("GET", "/api/v1/probe/saml", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET /probe/saml: unexpected status %d", resp.StatusCode)
+	}
+
+	var endpoints []ScannerSAMLEndpoint
+	if err := json.NewDecoder(resp.Body).Decode(&endpoints); err != nil {
+		return nil, fmt.Errorf("decode SAML endpoints response: %w", err)
+	}
+	return endpoints, nil
+}
+
+// PostSAMLResult sends a SAML metadata scan result for an endpoint to the API.
+func (c *APIClient) PostSAMLResult(endpointID string, result SAMLResultPayload) error {
+	resp, err := c.do("POST", "/api/v1/probe/saml/"+endpointID+"/result", result)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("POST /probe/saml/%s/result: unexpected status %d", endpointID, resp.StatusCode)
 	}
 	return nil
 }
