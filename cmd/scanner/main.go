@@ -123,8 +123,8 @@ func main() {
 	}
 }
 
-// runScanCycle fetches the host list and scans every host with bounded concurrency.
-// It blocks until all in-flight scans complete, then returns.
+// runScanCycle fetches the host and SAML endpoint lists and scans everything
+// with bounded concurrency. It blocks until all in-flight scans complete, then returns.
 func runScanCycle(ctx context.Context, log *zap.Logger, client *internal.APIClient, concurrency int) {
 	if concurrency <= 0 {
 		concurrency = 5
@@ -135,11 +135,19 @@ func runScanCycle(ctx context.Context, log *zap.Logger, client *internal.APIClie
 		log.Error("failed to fetch hosts", zap.Error(err))
 		return
 	}
-	if len(hosts) == 0 {
-		log.Info("no hosts to scan")
+
+	samlEndpoints, err := client.GetSAMLEndpoints()
+	if err != nil {
+		log.Error("failed to fetch SAML endpoints", zap.Error(err))
 		return
 	}
-	log.Info("starting scan cycle", zap.Int("hosts", len(hosts)))
+
+	total := len(hosts) + len(samlEndpoints)
+	if total == 0 {
+		log.Info("no endpoints to scan")
+		return
+	}
+	log.Info("starting scan cycle", zap.Int("hosts", len(hosts)), zap.Int("saml", len(samlEndpoints)))
 
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
@@ -148,15 +156,26 @@ func runScanCycle(ctx context.Context, log *zap.Logger, client *internal.APIClie
 		if ctx.Err() != nil {
 			break
 		}
-
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(host internal.ScannerHost) {
 			defer wg.Done()
 			defer func() { <-sem }()
-
 			scanAndReport(ctx, log, client, host)
 		}(h)
+	}
+
+	for _, ep := range samlEndpoints {
+		if ctx.Err() != nil {
+			break
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(endpoint internal.ScannerSAMLEndpoint) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			scanAndReportSAML(ctx, log, client, endpoint)
+		}(ep)
 	}
 
 	wg.Wait()
@@ -229,6 +248,40 @@ func scanAndReport(ctx context.Context, log *zap.Logger, client *internal.APICli
 			zap.Bool("tls12", tlsProfile.TLS12),
 			zap.Bool("tls13", tlsProfile.TLS13),
 			zap.Int("ciphers", len(tlsProfile.CipherSuites)),
+		)
+	}
+}
+
+// scanAndReportSAML fetches SAML metadata for a single endpoint and posts the result.
+func scanAndReportSAML(ctx context.Context, log *zap.Logger, client *internal.APIClient, endpoint internal.ScannerSAMLEndpoint) {
+	log = log.With(
+		zap.String("endpoint_id", endpoint.ID),
+		zap.String("url", endpoint.URL),
+	)
+
+	result := internal.ScanSAML(endpoint)
+
+	payload := internal.SAMLResultPayload{
+		ActiveFingerprint: result.Fingerprint,
+		Error:             result.Err,
+		PEMs:              result.PEMs,
+	}
+
+	if err := client.PostSAMLResult(endpoint.ID, payload); err != nil {
+		log.Error("failed to post SAML scan result", zap.Error(err))
+		return
+	}
+
+	if result.Err != nil {
+		log.Warn("SAML scan error", zap.String("error", *result.Err))
+	} else {
+		fp := ""
+		if result.Fingerprint != nil {
+			fp = *result.Fingerprint
+		}
+		log.Info("SAML scan successful",
+			zap.String("fingerprint", fp),
+			zap.Int("certs", len(result.PEMs)),
 		)
 	}
 }
