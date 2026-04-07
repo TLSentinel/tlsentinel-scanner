@@ -58,11 +58,16 @@ type ScannerSAMLEndpoint struct {
 	URL string `json:"url"`
 }
 
+// SAMLCertPayload is one certificate entry in a SAML scan result.
+type SAMLCertPayload struct {
+	PEM string `json:"pem"`
+	Use string `json:"use"` // "signing" or "encryption"
+}
+
 // SAMLResultPayload mirrors models.SAMLScanResultRequest.
 type SAMLResultPayload struct {
-	ActiveFingerprint *string  `json:"activeFingerprint"`
-	Error             *string  `json:"error"`
-	PEMs              []string `json:"pems"`
+	Error *string           `json:"error"`
+	Certs []SAMLCertPayload `json:"certs"`
 }
 
 // TLSProfilePayload mirrors models.TLSProfileIngestRequest.

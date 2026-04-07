@@ -18,11 +18,9 @@ var samlHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 // SAMLScanResult holds the outcome of fetching and parsing SAML metadata.
 type SAMLScanResult struct {
-	// Fingerprint is the SHA-256 of the first (signing) certificate's DER bytes.
-	// Nil when the scan failed or no signing certificate was found.
-	Fingerprint *string
-	// PEMs contains PEM-encoded signing certificates found in the metadata (first cert is primary).
-	PEMs []string
+	// Certs contains all certificates found in the metadata with their declared use.
+	// Empty when the scan failed or the metadata contained no certificates.
+	Certs []SAMLCertPayload
 	// Err holds a human-readable error string if the scan failed.
 	Err *string
 }
@@ -54,8 +52,8 @@ type xmlX509Data struct {
 	X509Certificate string `xml:"X509Certificate"`
 }
 
-// ScanSAML fetches the SAML metadata at endpoint.URL, extracts signing
-// certificates, and returns them as PEM strings.
+// ScanSAML fetches the SAML metadata at endpoint.URL, extracts signing and
+// encryption certificates, and returns them with their declared use labels.
 func ScanSAML(endpoint ScannerSAMLEndpoint) SAMLScanResult {
 	resp, err := samlHTTPClient.Get(endpoint.URL) //nolint:noctx // best-effort, timeout set on client
 	if err != nil {
@@ -75,35 +73,45 @@ func ScanSAML(endpoint ScannerSAMLEndpoint) SAMLScanResult {
 		return SAMLScanResult{Err: &msg}
 	}
 
-	pems, err := extractSAMLCerts(body)
+	certs, err := extractSAMLCerts(body)
 	if err != nil {
 		msg := err.Error()
 		return SAMLScanResult{Err: &msg}
 	}
-	if len(pems) == 0 {
-		msg := "no signing certificates found in SAML metadata"
+	if len(certs) == 0 {
+		msg := "no certificates found in SAML metadata"
 		return SAMLScanResult{Err: &msg}
 	}
 
-	fp := pemFingerprint(pems[0])
-	return SAMLScanResult{
-		Fingerprint: &fp,
-		PEMs:        pems,
-	}
+	return SAMLScanResult{Certs: certs}
 }
 
-// extractSAMLCerts parses raw SAML metadata XML and returns PEM-encoded
-// signing certificates. It prefers KeyDescriptors with use="signing"; if
-// none are found it falls back to those with no use attribute (unspecified,
-// meaning applicable to both signing and encryption).
-func extractSAMLCerts(data []byte) ([]string, error) {
+// extractSAMLCerts parses raw SAML metadata XML and returns all certificates
+// with their declared use labels (signing or encryption).
+//
+// KeyDescriptors with use="signing" are returned as-is. Those with
+// use="encryption" are returned as-is. Those with no use attribute
+// (unspecified / dual-use) are emitted twice — once as "signing" and once as
+// "encryption" — so the server can track both roles correctly.
+func extractSAMLCerts(data []byte) ([]SAMLCertPayload, error) {
 	var entity xmlEntityDescriptor
 	if err := xml.Unmarshal(data, &entity); err != nil {
 		return nil, fmt.Errorf("failed to parse SAML metadata XML: %w", err)
 	}
 
-	var signing []string
-	var unspecified []string
+	// Use a fingerprint+use set to deduplicate across role descriptors.
+	type certKey struct{ fp, use string }
+	seen := make(map[certKey]bool)
+	var results []SAMLCertPayload
+
+	addCert := func(pemStr, use string) {
+		key := certKey{pemFingerprint(pemStr), use}
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		results = append(results, SAMLCertPayload{PEM: pemStr, Use: use})
+	}
 
 	for _, role := range entity.RoleDescriptors {
 		for _, kd := range role.KeyDescriptors {
@@ -119,19 +127,19 @@ func extractSAMLCerts(data []byte) ([]string, error) {
 				}
 				switch use {
 				case "signing":
-					signing = append(signing, pemStr)
+					addCert(pemStr, "signing")
+				case "encryption":
+					addCert(pemStr, "encryption")
 				case "", "unspecified":
-					unspecified = append(unspecified, pemStr)
+					// Dual-use cert — register for both roles.
+					addCert(pemStr, "signing")
+					addCert(pemStr, "encryption")
 				}
-				// Ignore use="encryption" — we only care about signing certs.
 			}
 		}
 	}
 
-	if len(signing) > 0 {
-		return signing, nil
-	}
-	return unspecified, nil
+	return results, nil
 }
 
 // derBase64ToPEM converts a raw base64-encoded DER certificate (as found in
