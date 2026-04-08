@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -52,24 +54,46 @@ type xmlX509Data struct {
 	X509Certificate string `xml:"X509Certificate"`
 }
 
-// ScanSAML fetches the SAML metadata at endpoint.URL, extracts signing and
-// encryption certificates, and returns them with their declared use labels.
-func ScanSAML(endpoint ScannerSAMLEndpoint) SAMLScanResult {
-	resp, err := samlHTTPClient.Get(endpoint.URL) //nolint:noctx // best-effort, timeout set on client
+// fetchMetadata retrieves raw metadata bytes from an http://, https://, or
+// file:// URL. For file:// URLs the path is read directly from disk.
+func fetchMetadata(rawURL string) ([]byte, error) {
+	u, err := url.Parse(rawURL)
 	if err != nil {
-		msg := fmt.Sprintf("failed to fetch SAML metadata: %s", err.Error())
-		return SAMLScanResult{Err: &msg}
+		return nil, fmt.Errorf("invalid metadata URL: %w", err)
+	}
+
+	if u.Scheme == "file" {
+		data, err := os.ReadFile(u.Path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read metadata file: %w", err)
+		}
+		return data, nil
+	}
+
+	resp, err := samlHTTPClient.Get(rawURL) //nolint:noctx // best-effort, timeout set on client
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch SAML metadata: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		msg := fmt.Sprintf("SAML metadata returned HTTP %d", resp.StatusCode)
-		return SAMLScanResult{Err: &msg}
+		return nil, fmt.Errorf("SAML metadata returned HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20)) // 5 MB cap
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20)) // 5 MB cap
 	if err != nil {
-		msg := fmt.Sprintf("failed to read SAML metadata body: %s", err.Error())
+		return nil, fmt.Errorf("failed to read SAML metadata body: %w", err)
+	}
+	return data, nil
+}
+
+// ScanSAML fetches the SAML metadata at endpoint.URL, extracts signing and
+// encryption certificates, and returns them with their declared use labels.
+// Supports http://, https://, and file:// URLs.
+func ScanSAML(endpoint ScannerSAMLEndpoint) SAMLScanResult {
+	body, err := fetchMetadata(endpoint.URL)
+	if err != nil {
+		msg := err.Error()
 		return SAMLScanResult{Err: &msg}
 	}
 
