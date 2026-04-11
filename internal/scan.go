@@ -67,10 +67,21 @@ func ScanHost(host ScannerHost) ScanResult {
 	}
 	target := net.JoinHostPort(addr, strconv.Itoa(host.Port))
 
+	// Build a full cipher suite list (secure + insecure) so we can reach
+	// legacy servers that only offer RSA key exchange ciphers. Go 1.22+
+	// removed these from its default advertised list, which causes a
+	// handshake failure against servers that have no ECDHE/DHE support.
+	allSuites := make([]uint16, 0)
+	for _, s := range append(tls.CipherSuites(), tls.InsecureCipherSuites()...) {
+		allSuites = append(allSuites, s.ID)
+	}
+
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	conn, err := tls.DialWithDialer(dialer, "tcp", target, &tls.Config{
 		ServerName:         host.DNSName,
-		InsecureSkipVerify: true, //nolint:gosec // Intentional: collecting certs, not validating
+		InsecureSkipVerify: true,             //nolint:gosec // Intentional: collecting certs, not validating
+		MinVersion:         tls.VersionTLS10, // reach TLS 1.0/1.1 legacy endpoints
+		CipherSuites:       allSuites,        // include RSA key exchange for legacy servers
 	})
 	if err != nil {
 		errStr := err.Error()
