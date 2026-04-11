@@ -9,6 +9,19 @@ import (
 
 const probeTimeout = 5 * time.Second
 
+// allCipherSuiteIDs is the full set of cipher suite IDs known to crypto/tls
+// (secure + insecure). Built once at init time and reused across all probes.
+// Advertising the full set ensures we can reach legacy servers that only
+// offer RSA key exchange ciphers, which Go 1.22+ dropped from its defaults.
+var allCipherSuiteIDs = func() []uint16 {
+	suites := append(tls.CipherSuites(), tls.InsecureCipherSuites()...)
+	ids := make([]uint16, len(suites))
+	for i, s := range suites {
+		ids[i] = s.ID
+	}
+	return ids
+}()
+
 // ProbeTLSProfile probes the host for supported TLS versions and cipher suites.
 // It is a best-effort operation; individual sub-probes that fail are silently
 // skipped and represented as "not supported".
@@ -40,16 +53,33 @@ func ProbeTLSProfile(host ScannerHost) TLSProfilePayload {
 		return payload
 	}
 
-	// ── TLS 1.2 cipher suite enumeration ──────────────────────────────────
-	// Offer each suite individually with a pinned TLS 1.2 connection.
+	// ── Cipher suite enumeration ──────────────────────────────────────────
+	// Offer each suite individually for every supported legacy version.
 	// TLS 1.3 cipher suites are not client-negotiable via crypto/tls —
 	// the library always advertises all TLS 1.3 suites automatically.
-	if payload.TLS12 {
-		allSuites := append(tls.CipherSuites(), tls.InsecureCipherSuites()...)
+	// Note: crypto/tls only knows suites it implements; suites outside
+	// that set (e.g. RC4, export-grade) cannot be detected this way.
+	allSuites := append(tls.CipherSuites(), tls.InsecureCipherSuites()...)
+	seen := make(map[uint16]bool)
+
+	for _, ver := range []struct {
+		supported bool
+		version   uint16
+	}{
+		{payload.TLS12, tls.VersionTLS12},
+		{payload.TLS11, tls.VersionTLS11},
+		{payload.TLS10, tls.VersionTLS10},
+	} {
+		if !ver.supported {
+			continue
+		}
 		for _, suite := range allSuites {
-			if probeOneCipher(target, host.DNSName, suite.ID) {
-				// suite.Name is the IANA name (e.g. TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256).
+			if seen[suite.ID] {
+				continue
+			}
+			if probeOneCipher(target, host.DNSName, suite.ID, ver.version) {
 				payload.CipherSuites = append(payload.CipherSuites, suite.Name)
+				seen[suite.ID] = true
 			}
 		}
 	}
@@ -71,6 +101,7 @@ func probeVersion(target, serverName string, version uint16) bool {
 		InsecureSkipVerify: true, //nolint:gosec // Intentional: probing version support
 		MinVersion:         version,
 		MaxVersion:         version,
+		CipherSuites:       allCipherSuiteIDs,
 	})
 	if err != nil {
 		return false
@@ -79,16 +110,16 @@ func probeVersion(target, serverName string, version uint16) bool {
 	return true
 }
 
-// probeOneCipher returns true if the host accepts a TLS 1.2 handshake when
-// exactly suiteID is offered. The server must negotiate that suite or the
-// handshake will fail, so a successful connection confirms support.
-func probeOneCipher(target, serverName string, suiteID uint16) bool {
+// probeOneCipher returns true if the host accepts a handshake pinned to
+// version when exactly suiteID is offered. The server must negotiate that
+// suite or the handshake will fail, so a successful connection confirms support.
+func probeOneCipher(target, serverName string, suiteID uint16, version uint16) bool {
 	dialer := &net.Dialer{Timeout: probeTimeout}
 	conn, err := tls.DialWithDialer(dialer, "tcp", target, &tls.Config{
 		ServerName:         serverName,
 		InsecureSkipVerify: true, //nolint:gosec // Intentional: probing cipher support
-		MinVersion:         tls.VersionTLS12,
-		MaxVersion:         tls.VersionTLS12,
+		MinVersion:         version,
+		MaxVersion:         version,
 		CipherSuites:       []uint16{suiteID},
 	})
 	if err != nil {
@@ -98,13 +129,15 @@ func probeOneCipher(target, serverName string, suiteID uint16) bool {
 	return true
 }
 
-// probeSelectedCipher dials with default TLS settings and returns the IANA
+// probeSelectedCipher dials with a full cipher list and returns the IANA
 // name of the cipher suite the server chose.
 func probeSelectedCipher(target, serverName string) (string, error) {
 	dialer := &net.Dialer{Timeout: probeTimeout}
 	conn, err := tls.DialWithDialer(dialer, "tcp", target, &tls.Config{
 		ServerName:         serverName,
 		InsecureSkipVerify: true, //nolint:gosec // Intentional: probing cipher selection
+		MinVersion:         tls.VersionTLS10,
+		CipherSuites:       allCipherSuiteIDs,
 	})
 	if err != nil {
 		return "", err
