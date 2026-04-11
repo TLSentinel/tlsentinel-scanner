@@ -1,10 +1,11 @@
 package internal
 
 import (
-	"crypto/tls"
 	"net"
 	"strconv"
 	"time"
+
+	ztls "github.com/zmap/zcrypto/tls"
 )
 
 const probeTimeout = 5 * time.Second
@@ -14,7 +15,7 @@ const probeTimeout = 5 * time.Second
 // Advertising the full set ensures we can reach legacy servers that only
 // offer RSA key exchange ciphers, which Go 1.22+ dropped from its defaults.
 var allCipherSuiteIDs = func() []uint16 {
-	suites := append(tls.CipherSuites(), tls.InsecureCipherSuites()...)
+	suites := append(ztls.CipherSuites(), ztls.InsecureCipherSuites()...)
 	ids := make([]uint16, len(suites))
 	for i, s := range suites {
 		ids[i] = s.ID
@@ -42,10 +43,10 @@ func ProbeTLSProfile(host ScannerHost) TLSProfilePayload {
 	// ── TLS version support ────────────────────────────────────────────────
 	// Each probe pins both MinVersion and MaxVersion so the server must accept
 	// exactly that version or reject the handshake.
-	payload.TLS10 = probeVersion(target, host.DNSName, tls.VersionTLS10)
-	payload.TLS11 = probeVersion(target, host.DNSName, tls.VersionTLS11)
-	payload.TLS12 = probeVersion(target, host.DNSName, tls.VersionTLS12)
-	payload.TLS13 = probeVersion(target, host.DNSName, tls.VersionTLS13)
+	payload.TLS10 = probeVersion(target, host.DNSName, ztls.VersionTLS10)
+	payload.TLS11 = probeVersion(target, host.DNSName, ztls.VersionTLS11)
+	payload.TLS12 = probeVersion(target, host.DNSName, ztls.VersionTLS12)
+	payload.TLS13 = probeVersion(target, host.DNSName, ztls.VersionTLS13)
 
 	if !payload.TLS10 && !payload.TLS11 && !payload.TLS12 && !payload.TLS13 {
 		errStr := "no TLS version accepted by server"
@@ -57,18 +58,20 @@ func ProbeTLSProfile(host ScannerHost) TLSProfilePayload {
 	// Offer each suite individually for every supported legacy version.
 	// TLS 1.3 cipher suites are not client-negotiable via crypto/tls —
 	// the library always advertises all TLS 1.3 suites automatically.
-	// Note: crypto/tls only knows suites it implements; suites outside
-	// that set (e.g. RC4, export-grade) cannot be detected this way.
-	allSuites := append(tls.CipherSuites(), tls.InsecureCipherSuites()...)
+	// Note: crypto/tls only knows suites it implements — any suite not in
+	// ztls.CipherSuites()+ztls.InsecureCipherSuites() cannot be detected.
+	// Known gap: 0x003D TLS_RSA_WITH_AES_256_CBC_SHA256 is unimplemented
+	// in Go's stdlib and will never appear in enumeration results.
+	allSuites := append(ztls.CipherSuites(), ztls.InsecureCipherSuites()...)
 	seen := make(map[uint16]bool)
 
 	for _, ver := range []struct {
 		supported bool
 		version   uint16
 	}{
-		{payload.TLS12, tls.VersionTLS12},
-		{payload.TLS11, tls.VersionTLS11},
-		{payload.TLS10, tls.VersionTLS10},
+		{payload.TLS12, ztls.VersionTLS12},
+		{payload.TLS11, ztls.VersionTLS11},
+		{payload.TLS10, ztls.VersionTLS10},
 	} {
 		if !ver.supported {
 			continue
@@ -96,7 +99,7 @@ func ProbeTLSProfile(host ScannerHost) TLSProfilePayload {
 // probeVersion returns true if the host accepts a TLS handshake pinned to version.
 func probeVersion(target, serverName string, version uint16) bool {
 	dialer := &net.Dialer{Timeout: probeTimeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp", target, &tls.Config{
+	conn, err := ztls.DialWithDialer(dialer, "tcp", target, &ztls.Config{
 		ServerName:         serverName,
 		InsecureSkipVerify: true, //nolint:gosec // Intentional: probing version support
 		MinVersion:         version,
@@ -115,7 +118,7 @@ func probeVersion(target, serverName string, version uint16) bool {
 // suite or the handshake will fail, so a successful connection confirms support.
 func probeOneCipher(target, serverName string, suiteID uint16, version uint16) bool {
 	dialer := &net.Dialer{Timeout: probeTimeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp", target, &tls.Config{
+	conn, err := ztls.DialWithDialer(dialer, "tcp", target, &ztls.Config{
 		ServerName:         serverName,
 		InsecureSkipVerify: true, //nolint:gosec // Intentional: probing cipher support
 		MinVersion:         version,
@@ -133,10 +136,10 @@ func probeOneCipher(target, serverName string, suiteID uint16, version uint16) b
 // name of the cipher suite the server chose.
 func probeSelectedCipher(target, serverName string) (string, error) {
 	dialer := &net.Dialer{Timeout: probeTimeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp", target, &tls.Config{
+	conn, err := ztls.DialWithDialer(dialer, "tcp", target, &ztls.Config{
 		ServerName:         serverName,
 		InsecureSkipVerify: true, //nolint:gosec // Intentional: probing cipher selection
-		MinVersion:         tls.VersionTLS10,
+		MinVersion:         ztls.VersionTLS10,
 		CipherSuites:       allCipherSuiteIDs,
 	})
 	if err != nil {
@@ -144,5 +147,5 @@ func probeSelectedCipher(target, serverName string) (string, error) {
 	}
 	defer conn.Close()
 	// CipherSuiteName returns IANA-standard names for both TLS 1.2 and 1.3 suites.
-	return tls.CipherSuiteName(conn.ConnectionState().CipherSuite), nil
+	return ztls.CipherSuiteName(conn.ConnectionState().CipherSuite), nil
 }

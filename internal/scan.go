@@ -2,14 +2,14 @@ package internal
 
 import (
 	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"net"
 	"strconv"
 	"time"
+
+	ztls "github.com/zmap/zcrypto/tls"
 )
 
 // ScanResult holds the outcome of scanning a single host.
@@ -31,13 +31,13 @@ type ScanResult struct {
 // tlsVersionString maps the crypto/tls version constants to human-readable strings.
 func tlsVersionString(v uint16) string {
 	switch v {
-	case tls.VersionTLS10:
+	case ztls.VersionTLS10:
 		return "TLS 1.0"
-	case tls.VersionTLS11:
+	case ztls.VersionTLS11:
 		return "TLS 1.1"
-	case tls.VersionTLS12:
+	case ztls.VersionTLS12:
 		return "TLS 1.2"
-	case tls.VersionTLS13:
+	case ztls.VersionTLS13:
 		return "TLS 1.3"
 	default:
 		return fmt.Sprintf("TLS 0x%04x", v)
@@ -50,11 +50,11 @@ func certFingerprint(der []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// certToPEM encodes a single certificate to PEM format.
-func certToPEM(cert *x509.Certificate) string {
+// certToPEM encodes a DER certificate to PEM format.
+func certToPEM(der []byte) string {
 	return string(pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
-		Bytes: cert.Raw,
+		Bytes: der,
 	}))
 }
 
@@ -72,15 +72,15 @@ func ScanHost(host ScannerHost) ScanResult {
 	// removed these from its default advertised list, which causes a
 	// handshake failure against servers that have no ECDHE/DHE support.
 	allSuites := make([]uint16, 0)
-	for _, s := range append(tls.CipherSuites(), tls.InsecureCipherSuites()...) {
+	for _, s := range append(ztls.CipherSuites(), ztls.InsecureCipherSuites()...) {
 		allSuites = append(allSuites, s.ID)
 	}
 
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	conn, err := tls.DialWithDialer(dialer, "tcp", target, &tls.Config{
+	conn, err := ztls.DialWithDialer(dialer, "tcp", target, &ztls.Config{
 		ServerName:         host.DNSName,
 		InsecureSkipVerify: true,             //nolint:gosec // Intentional: collecting certs, not validating
-		MinVersion:         tls.VersionTLS10, // reach TLS 1.0/1.1 legacy endpoints
+		MinVersion:         ztls.VersionTLS10, // reach TLS 1.0/1.1 legacy endpoints
 		CipherSuites:       allSuites,        // include RSA key exchange for legacy servers
 	})
 	if err != nil {
@@ -99,7 +99,7 @@ func ScanHost(host ScannerHost) ScanResult {
 	// Build PEM list (leaf first, then intermediates/root).
 	pems := make([]string, 0, len(certs))
 	for _, c := range certs {
-		pems = append(pems, certToPEM(c))
+		pems = append(pems, certToPEM(c.Raw))
 	}
 
 	fp := certFingerprint(certs[0].Raw)
