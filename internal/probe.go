@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	ztls "github.com/zmap/zcrypto/tls"
+	ztls "github.com/runZeroInc/excrypto/crypto/tls"
 )
 
 const probeTimeout = 5 * time.Second
