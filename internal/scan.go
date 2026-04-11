@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	ztls "github.com/zmap/zcrypto/tls"
+	ztls "github.com/runZeroInc/excrypto/crypto/tls"
 )
 
 // ScanResult holds the outcome of scanning a single host.
