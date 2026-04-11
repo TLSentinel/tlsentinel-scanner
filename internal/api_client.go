@@ -25,8 +25,8 @@ func NewAPIClient(baseURL, token string) *APIClient {
 	}
 }
 
-// scannerConfig mirrors models.ScannerTokenResponse for the fields the scanner needs.
-type scannerConfig struct {
+// ScannerConfig mirrors models.ScannerTokenResponse for the fields the scanner needs.
+type ScannerConfig struct {
 	ID                  string `json:"id"`
 	Name                string `json:"name"`
 	ScanIntervalSeconds int    `json:"scanIntervalSeconds"`
@@ -108,20 +108,20 @@ func (c *APIClient) do(method, path string, body any) (*http.Response, error) {
 }
 
 // GetConfig fetches the scanner's own config from the API.
-func (c *APIClient) GetConfig() (scannerConfig, error) {
+func (c *APIClient) GetConfig() (ScannerConfig, error) {
 	resp, err := c.do("GET", "/api/v1/probe/config", nil)
 	if err != nil {
-		return scannerConfig{}, err
+		return ScannerConfig{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return scannerConfig{}, fmt.Errorf("GET /probe/config: unexpected status %d", resp.StatusCode)
+		return ScannerConfig{}, fmt.Errorf("GET /probe/config: unexpected status %d", resp.StatusCode)
 	}
 
-	var cfg scannerConfig
+	var cfg ScannerConfig
 	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
-		return scannerConfig{}, fmt.Errorf("decode config response: %w", err)
+		return ScannerConfig{}, fmt.Errorf("decode config response: %w", err)
 	}
 	return cfg, nil
 }
