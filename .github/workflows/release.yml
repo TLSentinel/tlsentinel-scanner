@@ -10,8 +10,9 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  release:
-    name: Build & Push
+
+  release-linux:
+    name: Build Linux & Docker
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -20,6 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Lowercase repo name
+        run: |
+          echo "IMAGE_NAME_LOWER=${GITHUB_REPOSITORY@L}" >> $GITHUB_ENV
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -27,69 +32,113 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push
+      - name: Build and push Docker
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}:${{ github.ref_name }}
           build-args: |
             VERSION=${{ github.ref_name }}
             COMMIT=${{ github.sha }}
-            BUILD_TIME=${{ github.event.head_commit.timestamp }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
 
-      - name: Generate Windows PE resource
-        run: |
-          go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
-          VERSION_BARE="${GITHUB_REF_NAME#v}"
-          VER_MAJOR=$(echo "${VERSION_BARE}" | cut -d. -f1 | grep -oE '^[0-9]+' || echo 0)
-          VER_MINOR=$(echo "${VERSION_BARE}" | cut -d. -f2 | grep -oE '^[0-9]+' || echo 0)
-          VER_PATCH=$(echo "${VERSION_BARE}" | cut -d. -f3 | grep -oE '^[0-9]+' || echo 0)
-          goversioninfo \
-            -file-version="${VERSION_BARE}" \
-            -product-version="${VERSION_BARE}" \
-            -ver-major="${VER_MAJOR}" \
-            -ver-minor="${VER_MINOR}" \
-            -ver-patch="${VER_PATCH}" \
-            -o cmd/scanner/resource_windows_amd64.syso \
-            cmd/scanner/versioninfo.json
-
-      - name: Build binaries
+      - name: Build Linux Binaries
         run: |
           mkdir -p dist
-          LDFLAGS="-s -w \
-            -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=${GITHUB_REF_NAME#v} \
-            -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Commit=${{ github.sha }} \
-            -X github.com/tlsentinel/tlsentinel-scanner/internal/version.BuildTime=${{ github.event.head_commit.timestamp }}"
-
-          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-linux-amd64       ./cmd/scanner
-          CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-linux-arm64       ./cmd/scanner
-          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-darwin-arm64      ./cmd/scanner
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-windows-amd64.exe ./cmd/scanner
+          LDFLAGS="-s -w -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=${GITHUB_REF_NAME#v} -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Commit=${{ github.sha }}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-linux-amd64 ./cmd/scanner
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-linux-arm64 ./cmd/scanner
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: dist/*
+
+  release-windows:
+    name: Build & Sign Windows
+    runs-on: windows-latest
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Generate Windows PE resource
+        run: |
+          go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+          $VERSION_BARE = "${{ github.ref_name }}".TrimStart('v')
+          $GOPATH = go env GOPATH
+          & "$GOPATH\bin\goversioninfo.exe" `
+            -file-version="$VERSION_BARE" `
+            -product-version="$VERSION_BARE" `
+            -propagate-ver-strings `
+            -o cmd/scanner/resource_windows_amd64.syso `
+            cmd/scanner/versioninfo.json
+
+      - name: Build Windows Binary
+        run: |
+          $VERSION_BARE = "${{ github.ref_name }}".TrimStart('v')
+          $LDFLAGS="-s -w -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=$VERSION_BARE -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Commit=${{ github.sha }}"
+          $env:CGO_ENABLED="0"; $env:GOOS="windows"; $env:GOARCH="amd64"
+          go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-windows-amd64.exe ./cmd/scanner
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Windows Binary
+        uses: azure/trusted-signing-action@v0.5.0
+        with:
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: ./dist
+          files-folder-filter: exe
+
+      - name: Add to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/tlsentinel-scanner-windows-amd64.exe
+
+  release-macos:
+    name: Build & Notarize macOS
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build macOS Binary
+        run: |
+          LDFLAGS="-s -w -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=${GITHUB_REF_NAME#v} -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Commit=${{ github.sha }}"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-darwin-arm64 ./cmd/scanner
+
+      - name: Package for Release
+        run: |
+          zip -j dist/tlsentinel-scanner-darwin-arm64.zip dist/tlsentinel-scanner-darwin-arm64
+
+      - name: Add to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/tlsentinel-scanner-darwin-arm64
+            dist/tlsentinel-scanner-darwin-arm64.zip
