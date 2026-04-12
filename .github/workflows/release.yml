@@ -88,7 +88,8 @@ jobs:
 
       - name: Build Windows Binary
         run: |
-          $LDFLAGS="-s -w -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=${{ github.ref_name }} -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Commit=${{ github.sha }}"
+          $VERSION_BARE = "${{ github.ref_name }}".TrimStart('v')
+          $LDFLAGS="-s -w -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=$VERSION_BARE -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Commit=${{ github.sha }}"
           $env:CGO_ENABLED="0"; $env:GOOS="windows"; $env:GOARCH="amd64"
           go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-windows-amd64.exe ./cmd/scanner
 
@@ -102,9 +103,9 @@ jobs:
       - name: Sign Windows Binary
         uses: azure/trusted-signing-action@v0.5.0
         with:
-          endpoint: https://eus.codesigning.azure.net/
-          trusted-signing-account-name: dennissigning
-          certificate-profile-name: TLSentinel-Release
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
           files-folder: ./dist
           files-folder-filter: exe
 
@@ -128,7 +129,7 @@ jobs:
 
       - name: Build macOS Binary
         run: |
-          LDFLAGS="-s -w -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=${{ github.ref_name }} -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Commit=${{ github.sha }}"
+          LDFLAGS="-s -w -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=${GITHUB_REF_NAME#v} -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Commit=${{ github.sha }}"
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-darwin-arm64 ./cmd/scanner
 
       - name: Package for Release
