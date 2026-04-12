@@ -59,17 +59,28 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Generate Windows PE resource
+        run: |
+          go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+          goversioninfo \
+            -file-version="${GITHUB_REF_NAME#v}" \
+            -product-version="${GITHUB_REF_NAME#v}" \
+            -ver-major=0 -ver-minor=0 -ver-patch=0 \
+            -o cmd/scanner/resource_windows_amd64.syso \
+            cmd/scanner/versioninfo.json
+
       - name: Build binaries
         run: |
+          mkdir -p dist
           LDFLAGS="-s -w \
             -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=${{ github.ref_name }} \
             -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Commit=${{ github.sha }} \
             -X github.com/tlsentinel/tlsentinel-scanner/internal/version.BuildTime=${{ github.event.head_commit.timestamp }}"
 
-          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/scanner-linux-amd64       ./cmd/scanner
-          CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/scanner-linux-arm64       ./cmd/scanner
-          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/scanner-darwin-arm64      ./cmd/scanner
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/scanner-windows-amd64.exe ./cmd/scanner
+          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-linux-amd64       ./cmd/scanner
+          CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-linux-arm64       ./cmd/scanner
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-darwin-arm64      ./cmd/scanner
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/tlsentinel-scanner-windows-amd64.exe ./cmd/scanner
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

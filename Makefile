@@ -1,10 +1,11 @@
-.PHONY: run build clean docker
+.PHONY: run build clean docker syso
 # =============================================================================
 # Variables
 # =============================================================================
 
 # Version stamping
 VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION_BARE := $(VERSION:v%=%)
 COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG        := github.com/tlsentinel/tlsentinel-scanner/internal/version
@@ -35,11 +36,21 @@ define cross_compile
 	done
 endef
 
-run: 
+run:
 	go run $(LDFLAGS) $(CMD)
 
-build:
-	$(call cross_compile,server,$(CMD))
+# syso generates the Windows PE version resource. The .syso file is picked up
+# automatically by the Go compiler when targeting windows/amd64.
+syso:
+	goversioninfo \
+		-file-version=$(VERSION_BARE) \
+		-product-version=$(VERSION_BARE) \
+		-ver-major=0 -ver-minor=0 -ver-patch=0 \
+		-o cmd/scanner/resource_windows_amd64.syso \
+		cmd/scanner/versioninfo.json
+
+build: syso
+	$(call cross_compile,tlsentinel-scanner,$(CMD))
 
 # =============================================================================
 # Container Images
