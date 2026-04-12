@@ -102,7 +102,7 @@ jobs:
       - name: Sign Windows Binary
         uses: azure/trusted-signing-action@v0.5.0
         with:
-          endpoint: https://eastus.codesigning.azure.net/
+          endpoint: https://eus.codesigning.azure.net/
           trusted-signing-account-name: dennissigning
           certificate-profile-name: TLSentinel-Release
           files-folder: ./dist
