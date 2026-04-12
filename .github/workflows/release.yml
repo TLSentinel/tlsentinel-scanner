@@ -78,10 +78,19 @@ jobs:
           go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
           $VERSION_BARE = "${{ github.ref_name }}".TrimStart('v')
           $VER_PARTS = $VERSION_BARE.Split('.')
-          & $(go env GOPATH)/bin/goversioninfo.exe `
-            -file-version="$VERSION_BARE" -product-version="$VERSION_BARE" `
-            -ver-major=$($VER_PARTS[0]) -ver-minor=$($VER_PARTS[1]) -ver-patch=$($VER_PARTS[2]) `
-            -o cmd/scanner/resource_windows_amd64.syso cmd/scanner/versioninfo.json
+          $MAJOR = if ($VER_PARTS[0]) { $VER_PARTS[0] } else { 0 }
+          $MINOR = if ($VER_PARTS[1]) { $VER_PARTS[1] } else { 0 }
+          $PATCH = if ($VER_PARTS[2]) { $VER_PARTS[2] } else { 0 }
+          
+          # Use 'go run' or call the binary now that it's in the PATH
+          goversioninfo `
+            -file-version="$VERSION_BARE" `
+            -product-version="$VERSION_BARE" `
+            -ver-major=$MAJOR `
+            -ver-minor=$MINOR `
+            -ver-patch=$PATCH `
+            -o cmd/scanner/resource_windows_amd64.syso `
+            cmd/scanner/versioninfo.json
 
       - name: Build Windows Binary
         run: |
