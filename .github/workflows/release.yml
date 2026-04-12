@@ -77,21 +77,11 @@ jobs:
         run: |
           go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
           $VERSION_BARE = "${{ github.ref_name }}".TrimStart('v')
-          $VER_PARTS = $VERSION_BARE.Split('.')
-          
-          # Ensure these are treated as integers
-          [int]$MAJOR = if ($VER_PARTS[0]) { $VER_PARTS[0] } else { 0 }
-          [int]$MINOR = if ($VER_PARTS[1]) { $VER_PARTS[1] } else { 0 }
-          [int]$PATCH = if ($VER_PARTS[2]) { $VER_PARTS[2] } else { 0 }
-          
-          # Use the full path to the bin to be explicit, but quoted
           $GOPATH = go env GOPATH
           & "$GOPATH\bin\goversioninfo.exe" `
             -file-version="$VERSION_BARE" `
             -product-version="$VERSION_BARE" `
-            -ver-major=$MAJOR `
-            -ver-minor=$MINOR `
-            -ver-patch=$PATCH `
+            -propagate-ver-strings `
             -o cmd/scanner/resource_windows_amd64.syso `
             cmd/scanner/versioninfo.json
 
