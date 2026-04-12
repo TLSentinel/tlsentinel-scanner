@@ -18,23 +18,20 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install goversioninfo
-        run: go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+      - name: Build (linux/amd64)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./...
 
-      - name: Generate Windows PE resource
-        run: |
-          goversioninfo \
-            -file-version="dev" \
-            -product-version="dev" \
-            -ver-major=0 -ver-minor=0 -ver-patch=0 \
-            -o cmd/scanner/resource_windows_amd64.syso \
-            cmd/scanner/versioninfo.json
+      - name: Build (linux/arm64)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./...
 
-      - name: Build
-        run: go build ./...
+      - name: Build (darwin/amd64)
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build ./...
 
-      - name: Build (Windows cross-compile)
-        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./cmd/scanner
+      - name: Build (darwin/arm64)
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build ./...
+
+      - name: Build (windows/amd64)
+        run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./...
 
       - name: Vet
         run: go vet ./...
