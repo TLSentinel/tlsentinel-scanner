@@ -62,10 +62,16 @@ jobs:
       - name: Generate Windows PE resource
         run: |
           go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+          VERSION_BARE="${GITHUB_REF_NAME#v}"
+          VER_MAJOR=$(echo "${VERSION_BARE}" | cut -d. -f1 | grep -oE '^[0-9]+' || echo 0)
+          VER_MINOR=$(echo "${VERSION_BARE}" | cut -d. -f2 | grep -oE '^[0-9]+' || echo 0)
+          VER_PATCH=$(echo "${VERSION_BARE}" | cut -d. -f3 | grep -oE '^[0-9]+' || echo 0)
           goversioninfo \
-            -file-version="${GITHUB_REF_NAME#v}" \
-            -product-version="${GITHUB_REF_NAME#v}" \
-            -ver-major=0 -ver-minor=0 -ver-patch=0 \
+            -file-version="${VERSION_BARE}" \
+            -product-version="${VERSION_BARE}" \
+            -ver-major="${VER_MAJOR}" \
+            -ver-minor="${VER_MINOR}" \
+            -ver-patch="${VER_PATCH}" \
             -o cmd/scanner/resource_windows_amd64.syso \
             cmd/scanner/versioninfo.json
 
@@ -73,7 +79,7 @@ jobs:
         run: |
           mkdir -p dist
           LDFLAGS="-s -w \
-            -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=${{ github.ref_name }} \
+            -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=${GITHUB_REF_NAME#v} \
             -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Commit=${{ github.sha }} \
             -X github.com/tlsentinel/tlsentinel-scanner/internal/version.BuildTime=${{ github.event.head_commit.timestamp }}"
 
