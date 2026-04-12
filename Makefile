@@ -4,8 +4,11 @@
 # =============================================================================
 
 # Version stamping
-VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION      := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 VERSION_BARE := $(VERSION:v%=%)
+VERSION_MAJOR := $(shell echo "$(VERSION_BARE)" | cut -d. -f1 | grep -oE '^[0-9]+' || echo 0)
+VERSION_MINOR := $(shell echo "$(VERSION_BARE)" | cut -d. -f2 | grep -oE '^[0-9]+' || echo 0)
+VERSION_PATCH := $(shell echo "$(VERSION_BARE)" | cut -d. -f3 | grep -oE '^[0-9]+' || echo 0)
 COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG        := github.com/tlsentinel/tlsentinel-scanner/internal/version
@@ -45,7 +48,7 @@ syso:
 	goversioninfo \
 		-file-version=$(VERSION_BARE) \
 		-product-version=$(VERSION_BARE) \
-		-ver-major=0 -ver-minor=0 -ver-patch=0 \
+		-ver-major=$(VERSION_MAJOR) -ver-minor=$(VERSION_MINOR) -ver-patch=$(VERSION_PATCH) \
 		-o cmd/scanner/resource_windows_amd64.syso \
 		cmd/scanner/versioninfo.json
 
