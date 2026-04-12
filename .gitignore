@@ -32,4 +32,4 @@ go.work.sum
 # .vscode/
 
 # Generated Windows PE resource
-cmd/scanner/resource_windows_amd64.syso
+cmd/scanner/*.syso
