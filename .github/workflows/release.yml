@@ -73,7 +73,7 @@ jobs:
         run: |
           mkdir -p dist
           LDFLAGS="-s -w \
-            -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=${{ github.ref_name }} \
+            -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Version=${GITHUB_REF_NAME#v} \
             -X github.com/tlsentinel/tlsentinel-scanner/internal/version.Commit=${{ github.sha }} \
             -X github.com/tlsentinel/tlsentinel-scanner/internal/version.BuildTime=${{ github.event.head_commit.timestamp }}"
 

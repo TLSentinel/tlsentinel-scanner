@@ -9,7 +9,7 @@ VERSION_BARE := $(VERSION:v%=%)
 COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG        := github.com/tlsentinel/tlsentinel-scanner/internal/version
-LDFLAGS    := -ldflags "-X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)"
+LDFLAGS    := -ldflags "-X $(PKG).Version=$(VERSION_BARE) -X $(PKG).Commit=$(COMMIT) -X $(PKG).BuildTime=$(BUILD_TIME)"
 
 # Directories / commands
 BIN_DIR     := bin
