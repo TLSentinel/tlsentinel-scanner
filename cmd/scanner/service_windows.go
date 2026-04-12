@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"os"
+	"strings"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -70,8 +71,10 @@ func installService(name, displayName string) error {
 	defer s.Close()
 
 	if err := eventlog.InstallAsEventCreate(name, eventlog.Error|eventlog.Warning|eventlog.Info); err != nil {
-		_ = s.Delete()
-		return err
+		if !strings.Contains(err.Error(), "already installed") {
+			_ = s.Delete()
+			return err
+		}
 	}
 	return nil
 }
