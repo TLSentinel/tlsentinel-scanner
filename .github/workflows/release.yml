@@ -105,7 +105,8 @@ jobs:
           endpoint: https://eastus.codesigning.azure.net/
           trusted-signing-account-name: dennissigning
           certificate-profile-name: TLSentinel-Release
-          files-directory: ./dist
+          files-folder: ./dist
+          files-folder-filter: exe
 
       - name: Add to Release
         uses: softprops/action-gh-release@v2
