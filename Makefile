@@ -45,7 +45,7 @@ syso:
 		-file-version=$(VERSION) \
 		-product-version=$(VERSION) \
 		-ver-major=0 -ver-minor=0 -ver-patch=0 \
-		-o cmd/scanner/resource.syso \
+		-o cmd/scanner/resource_windows_amd64.syso \
 		cmd/scanner/versioninfo.json
 
 build: syso
