@@ -1,4 +1,4 @@
-.PHONY: run build clean docker
+.PHONY: run build clean docker syso
 # =============================================================================
 # Variables
 # =============================================================================
@@ -35,11 +35,21 @@ define cross_compile
 	done
 endef
 
-run: 
+run:
 	go run $(LDFLAGS) $(CMD)
 
-build:
-	$(call cross_compile,server,$(CMD))
+# syso generates the Windows PE version resource. The .syso file is picked up
+# automatically by the Go compiler when targeting windows/amd64.
+syso:
+	goversioninfo \
+		-file-version=$(VERSION) \
+		-product-version=$(VERSION) \
+		-ver-major=0 -ver-minor=0 -ver-patch=0 \
+		-o cmd/scanner/resource.syso \
+		cmd/scanner/versioninfo.json
+
+build: syso
+	$(call cross_compile,tlsentinel-scanner,$(CMD))
 
 # =============================================================================
 # Container Images
