@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tlsentinel/tlsentinel-scanner/internal/logger"
 	"github.com/tlsentinel/tlsentinel-scanner/internal/version"
-	"go.uber.org/zap"
 )
 
 func main() {
@@ -29,18 +29,12 @@ func main() {
 				return nil
 			}
 
-			log, err := logger.Build()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to initialise logger: %v\n", err)
-				os.Exit(1)
-			}
-			zap.ReplaceGlobals(log)
-			defer log.Sync() //nolint:errcheck
+			logger.Build()
 
-			log.Info("starting",
-				zap.String("version", version.Version),
-				zap.String("commit", version.Commit),
-				zap.String("built", version.BuildTime),
+			slog.Info("starting",
+				"version", version.Version,
+				"commit", version.Commit,
+				"built", version.BuildTime,
 			)
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

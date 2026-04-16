@@ -25,12 +25,22 @@ func NewAPIClient(baseURL, token string) *APIClient {
 	}
 }
 
+// ScannerDiscoveryNetwork mirrors models.ScannerDiscoveryNetwork for the fields
+// the scanner needs to perform a discovery sweep.
+type ScannerDiscoveryNetwork struct {
+	ID             string `json:"id"`
+	Range          string `json:"range"`
+	Ports          []int  `json:"ports"`
+	CronExpression string `json:"cronExpression"`
+}
+
 // ScannerConfig mirrors models.ScannerTokenResponse for the fields the scanner needs.
 type ScannerConfig struct {
-	ID                  string `json:"id"`
-	Name                string `json:"name"`
-	ScanIntervalSeconds int    `json:"scanIntervalSeconds"`
-	ScanConcurrency     int    `json:"scanConcurrency"`
+	ID                 string                    `json:"id"`
+	Name               string                    `json:"name"`
+	ScanCronExpression string                    `json:"scanCronExpression"`
+	ScanConcurrency    int                       `json:"scanConcurrency"`
+	Networks           []ScannerDiscoveryNetwork `json:"networks"`
 }
 
 // ScannerHost mirrors models.ScannerHost.
@@ -188,6 +198,28 @@ func (c *APIClient) PostSAMLResult(endpointID string, result SAMLResultPayload) 
 
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("POST /probe/saml/%s/result: unexpected status %d", endpointID, resp.StatusCode)
+	}
+	return nil
+}
+
+// PostDiscoveryResults sends TLS-bearing IP:port pairs found during a sweep to the server inbox.
+func (c *APIClient) PostDiscoveryResults(networkID string, items []DiscoveryReportItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	body := struct {
+		NetworkID string                `json:"networkId"`
+		Items     []DiscoveryReportItem `json:"items"`
+	}{NetworkID: networkID, Items: items}
+
+	resp, err := c.do("POST", "/api/v1/probe/discovery", body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("POST /probe/discovery: unexpected status %d", resp.StatusCode)
 	}
 	return nil
 }
