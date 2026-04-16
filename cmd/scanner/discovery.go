@@ -7,14 +7,26 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/tlsentinel/tlsentinel-scanner/internal"
 )
 
-// runDiscoverySweep is the stub discovery job. It enumerates every IP address
-// in the network's range and logs each target. Real sweep logic (dial, TLS
-// handshake, inbox reporting) will replace the log calls.
+const discoveryConcurrency = 50
+
+// runDiscoverySweep enumerates every IP:port in the network and probes each
+// for a TLS handshake. Found services are logged; results will be posted to
+// the server inbox in a future iteration.
 func runDiscoverySweep(network internal.ScannerDiscoveryNetwork) {
+	if len(network.Ports) == 0 {
+		slog.Warn("discovery network has no ports configured, skipping sweep",
+			"network_id", network.ID,
+			"range", network.Range,
+		)
+		return
+	}
+
 	slog.Info("discovery sweep starting",
 		"network_id", network.ID,
 		"range", network.Range,
@@ -31,18 +43,44 @@ func runDiscoverySweep(network internal.ScannerDiscoveryNetwork) {
 		return
 	}
 
+	sem := make(chan struct{}, discoveryConcurrency)
+	var wg sync.WaitGroup
+	var found atomic.Int64
+
 	for _, ip := range ips {
-		slog.Info("discovery target", "ip", ip, "ports", network.Ports)
+		for _, port := range network.Ports {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(ip string, port int) {
+				defer wg.Done()
+				defer func() { <-sem }()
+
+				result := internal.ProbeDiscoveryTarget(ip, port)
+				if !result.TLSFound {
+					return
+				}
+
+				found.Add(1)
+				slog.Info("TLS service discovered",
+					"network_id", network.ID,
+					"ip", ip,
+					"port", port,
+				)
+			}(ip, port)
+		}
 	}
+
+	wg.Wait()
 
 	slog.Info("discovery sweep complete",
 		"network_id", network.ID,
-		"targets", len(ips),
+		"targets", len(ips)*len(network.Ports),
+		"tls_found", found.Load(),
 	)
 }
 
 // enumerateRange returns every host IP in a CIDR block or hyphenated range.
-// CIDR:  "10.0.0.0/24"           → 10.0.0.1 … 10.0.0.254
+// CIDR:  "10.0.0.0/24"               → 10.0.0.1 … 10.0.0.254
 // Range: "192.168.1.1-192.168.1.50"
 func enumerateRange(s string) ([]string, error) {
 	if strings.Contains(s, "/") {
