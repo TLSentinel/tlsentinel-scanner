@@ -76,6 +76,27 @@ func run(ctx context.Context, client *internal.APIClient) {
 		)
 		entryID, _ = c.AddFunc("0 * * * *", scanFunc)
 	}
+
+	// networkEntries tracks the cron entry for each discovery network by ID.
+	type networkEntry struct {
+		network internal.ScannerDiscoveryNetwork
+		entryID gocron.EntryID
+	}
+	networkEntries := map[string]networkEntry{}
+
+	// Register jobs for any networks already present in the initial config.
+	for _, n := range cfg.Networks {
+		n := n
+		eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(n) })
+		if addErr != nil {
+			slog.Error("invalid cron expression for network",
+				"network_id", n.ID, "expr", n.CronExpression, "error", addErr)
+			continue
+		}
+		networkEntries[n.ID] = networkEntry{network: n, entryID: eid}
+		slog.Info("discovery network scheduled", "network_id", n.ID, "range", n.Range, "schedule", n.CronExpression)
+	}
+
 	c.Start()
 	defer c.Stop()
 
@@ -88,30 +109,66 @@ func run(ctx context.Context, client *internal.APIClient) {
 			slog.Info("scanner stopped")
 			return
 		case <-ticker.C:
+			// ── Refresh host scan config ──────────────────────────────────
 			updated, err := client.GetConfig()
 			if err != nil {
 				slog.Warn("failed to refresh config, keeping previous values", "error", err)
-				continue
-			}
-			mu.Lock()
-			if updated.ScanCronExpression != current.ScanCronExpression {
-				slog.Info("scan schedule updated",
-					"from", current.ScanCronExpression,
-					"to", updated.ScanCronExpression,
-				)
-				c.Remove(entryID)
-				newID, addErr := c.AddFunc(updated.ScanCronExpression, scanFunc)
-				if addErr != nil {
-					slog.Error("invalid updated cron expression, keeping previous schedule",
-						"expr", updated.ScanCronExpression,
-						"error", addErr,
+			} else {
+				mu.Lock()
+				if updated.ScanCronExpression != current.ScanCronExpression {
+					slog.Info("scan schedule updated",
+						"from", current.ScanCronExpression,
+						"to", updated.ScanCronExpression,
 					)
-				} else {
-					entryID = newID
+					c.Remove(entryID)
+					newID, addErr := c.AddFunc(updated.ScanCronExpression, scanFunc)
+					if addErr != nil {
+						slog.Error("invalid updated cron expression, keeping previous schedule",
+							"expr", updated.ScanCronExpression,
+							"error", addErr,
+						)
+					} else {
+						entryID = newID
+					}
+				}
+				current = updated
+				mu.Unlock()
+
+				// ── Reconcile discovery network jobs ──────────────────────────
+				// Networks are embedded in the config response — no separate API call needed.
+				fresh := make(map[string]internal.ScannerDiscoveryNetwork, len(updated.Networks))
+				for _, n := range updated.Networks {
+					fresh[n.ID] = n
+				}
+
+				// Remove jobs for networks that are gone or have a changed schedule.
+				for id, entry := range networkEntries {
+					n, exists := fresh[id]
+					if !exists || n.CronExpression != entry.network.CronExpression {
+						c.Remove(entry.entryID)
+						delete(networkEntries, id)
+						if !exists {
+							slog.Info("discovery network removed", "network_id", id)
+						}
+					}
+				}
+
+				// Add jobs for networks not yet scheduled.
+				for id, n := range fresh {
+					if _, scheduled := networkEntries[id]; scheduled {
+						continue
+					}
+					n := n
+					eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(n) })
+					if addErr != nil {
+						slog.Error("invalid cron expression for network",
+							"network_id", n.ID, "expr", n.CronExpression, "error", addErr)
+						continue
+					}
+					networkEntries[id] = networkEntry{network: n, entryID: eid}
+					slog.Info("discovery network scheduled", "network_id", n.ID, "range", n.Range, "schedule", n.CronExpression)
 				}
 			}
-			current = updated
-			mu.Unlock()
 		}
 	}
 }

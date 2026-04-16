@@ -25,12 +25,22 @@ func NewAPIClient(baseURL, token string) *APIClient {
 	}
 }
 
+// ScannerDiscoveryNetwork mirrors models.ScannerDiscoveryNetwork for the fields
+// the scanner needs to perform a discovery sweep.
+type ScannerDiscoveryNetwork struct {
+	ID             string `json:"id"`
+	Range          string `json:"range"`
+	Ports          []int  `json:"ports"`
+	CronExpression string `json:"cronExpression"`
+}
+
 // ScannerConfig mirrors models.ScannerTokenResponse for the fields the scanner needs.
 type ScannerConfig struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	ScanCronExpression string `json:"scanCronExpression"`
-	ScanConcurrency    int    `json:"scanConcurrency"`
+	ID                 string                    `json:"id"`
+	Name               string                    `json:"name"`
+	ScanCronExpression string                    `json:"scanCronExpression"`
+	ScanConcurrency    int                       `json:"scanConcurrency"`
+	Networks           []ScannerDiscoveryNetwork `json:"networks"`
 }
 
 // ScannerHost mirrors models.ScannerHost.
