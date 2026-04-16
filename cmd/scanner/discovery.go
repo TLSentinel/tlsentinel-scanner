@@ -61,13 +61,16 @@ func runDiscoverySweep(client *internal.APIClient, network internal.ScannerDisco
 					return
 				}
 
-				slog.Info("TLS service discovered",
-					"network_id", network.ID,
-					"ip", ip,
-					"port", port,
-				)
+				rdns := internal.ReverseLookup(ip)
 
-				if err := client.PostDiscoveryResults(network.ID, []internal.DiscoveryReportItem{{IP: ip, Port: port}}); err != nil {
+				log := slog.With("network_id", network.ID, "ip", ip, "port", port)
+				if rdns != nil {
+					log = log.With("rdns", *rdns)
+				}
+				log.Info("TLS service discovered")
+
+				item := internal.DiscoveryReportItem{IP: ip, Port: port, RDNS: rdns}
+				if err := client.PostDiscoveryResults(network.ID, []internal.DiscoveryReportItem{item}); err != nil {
 					slog.Error("failed to post discovery result",
 						"network_id", network.ID,
 						"ip", ip,

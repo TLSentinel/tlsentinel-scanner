@@ -3,6 +3,7 @@ package internal
 import (
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	ztls "github.com/runZeroInc/excrypto/crypto/tls"
@@ -21,8 +22,20 @@ type DiscoveryResult struct {
 
 // DiscoveryReportItem is a confirmed TLS-bearing IP:port, ready to post to the server.
 type DiscoveryReportItem struct {
-	IP   string `json:"ip"`
-	Port int    `json:"port"`
+	IP   string  `json:"ip"`
+	Port int     `json:"port"`
+	RDNS *string `json:"rdns,omitempty"`
+}
+
+// ReverseLookup returns the first PTR record for ip, or nil if none is found.
+func ReverseLookup(ip string) *string {
+	names, err := net.LookupAddr(ip)
+	if err != nil || len(names) == 0 {
+		return nil
+	}
+	// PTR records are returned with a trailing dot — strip it.
+	name := strings.TrimSuffix(names[0], ".")
+	return &name
 }
 
 // ProbeDiscoveryTarget dials ip:port and attempts a TLS/SSL handshake.
