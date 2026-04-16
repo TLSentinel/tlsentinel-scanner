@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/tlsentinel/tlsentinel-scanner/internal"
 )
@@ -43,9 +44,8 @@ func runDiscoverySweep(client *internal.APIClient, network internal.ScannerDisco
 
 	sem := make(chan struct{}, discoveryConcurrency)
 	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		found   []internal.DiscoveryReportItem
+		wg    sync.WaitGroup
+		found atomic.Int64
 	)
 
 	for _, ip := range ips {
@@ -66,9 +66,17 @@ func runDiscoverySweep(client *internal.APIClient, network internal.ScannerDisco
 					"ip", ip,
 					"port", port,
 				)
-				mu.Lock()
-				found = append(found, internal.DiscoveryReportItem{IP: ip, Port: port})
-				mu.Unlock()
+
+				if err := client.PostDiscoveryResults(network.ID, []internal.DiscoveryReportItem{{IP: ip, Port: port}}); err != nil {
+					slog.Error("failed to post discovery result",
+						"network_id", network.ID,
+						"ip", ip,
+						"port", port,
+						"error", err,
+					)
+					return
+				}
+				found.Add(1)
 			}(ip, port)
 		}
 	}
@@ -78,17 +86,8 @@ func runDiscoverySweep(client *internal.APIClient, network internal.ScannerDisco
 	slog.Info("discovery sweep complete",
 		"network_id", network.ID,
 		"targets", len(ips)*len(network.Ports),
-		"tls_found", len(found),
+		"tls_found", found.Load(),
 	)
-
-	if len(found) > 0 {
-		if err := client.PostDiscoveryResults(network.ID, found); err != nil {
-			slog.Error("failed to post discovery results",
-				"network_id", network.ID,
-				"error", err,
-			)
-		}
-	}
 }
 
 // enumerateRange returns every host IP in a CIDR block or hyphenated range.
