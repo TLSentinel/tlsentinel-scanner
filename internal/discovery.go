@@ -19,6 +19,12 @@ type DiscoveryResult struct {
 	TLSFound bool
 }
 
+// DiscoveryReportItem is a confirmed TLS-bearing IP:port, ready to post to the server.
+type DiscoveryReportItem struct {
+	IP   string `json:"ip"`
+	Port int    `json:"port"`
+}
+
 // ProbeDiscoveryTarget dials ip:port and attempts a TLS/SSL handshake.
 // Returns TLSFound=false when the port is closed, filtered, or does not speak TLS.
 //

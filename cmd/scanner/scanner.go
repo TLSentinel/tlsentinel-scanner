@@ -87,7 +87,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 	// Register jobs for any networks already present in the initial config.
 	for _, n := range cfg.Networks {
 		n := n
-		eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(n) })
+		eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(client, n) })
 		if addErr != nil {
 			slog.Error("invalid cron expression for network",
 				"network_id", n.ID, "expr", n.CronExpression, "error", addErr)
@@ -159,7 +159,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 						continue
 					}
 					n := n
-					eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(n) })
+					eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(client, n) })
 					if addErr != nil {
 						slog.Error("invalid cron expression for network",
 							"network_id", n.ID, "expr", n.CronExpression, "error", addErr)

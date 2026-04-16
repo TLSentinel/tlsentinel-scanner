@@ -8,17 +8,15 @@ import (
 	"net"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/tlsentinel/tlsentinel-scanner/internal"
 )
 
 const discoveryConcurrency = 50
 
-// runDiscoverySweep enumerates every IP:port in the network and probes each
-// for a TLS handshake. Found services are logged; results will be posted to
-// the server inbox in a future iteration.
-func runDiscoverySweep(network internal.ScannerDiscoveryNetwork) {
+// runDiscoverySweep enumerates every IP:port in the network, probes each for
+// TLS, and posts any findings to the server discovery inbox.
+func runDiscoverySweep(client *internal.APIClient, network internal.ScannerDiscoveryNetwork) {
 	if len(network.Ports) == 0 {
 		slog.Warn("discovery network has no ports configured, skipping sweep",
 			"network_id", network.ID,
@@ -44,8 +42,11 @@ func runDiscoverySweep(network internal.ScannerDiscoveryNetwork) {
 	}
 
 	sem := make(chan struct{}, discoveryConcurrency)
-	var wg sync.WaitGroup
-	var found atomic.Int64
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		found   []internal.DiscoveryReportItem
+	)
 
 	for _, ip := range ips {
 		for _, port := range network.Ports {
@@ -60,12 +61,14 @@ func runDiscoverySweep(network internal.ScannerDiscoveryNetwork) {
 					return
 				}
 
-				found.Add(1)
 				slog.Info("TLS service discovered",
 					"network_id", network.ID,
 					"ip", ip,
 					"port", port,
 				)
+				mu.Lock()
+				found = append(found, internal.DiscoveryReportItem{IP: ip, Port: port})
+				mu.Unlock()
 			}(ip, port)
 		}
 	}
@@ -75,8 +78,17 @@ func runDiscoverySweep(network internal.ScannerDiscoveryNetwork) {
 	slog.Info("discovery sweep complete",
 		"network_id", network.ID,
 		"targets", len(ips)*len(network.Ports),
-		"tls_found", found.Load(),
+		"tls_found", len(found),
 	)
+
+	if len(found) > 0 {
+		if err := client.PostDiscoveryResults(network.ID, found); err != nil {
+			slog.Error("failed to post discovery results",
+				"network_id", network.ID,
+				"error", err,
+			)
+		}
+	}
 }
 
 // enumerateRange returns every host IP in a CIDR block or hyphenated range.

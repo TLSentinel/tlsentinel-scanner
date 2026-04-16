@@ -202,6 +202,28 @@ func (c *APIClient) PostSAMLResult(endpointID string, result SAMLResultPayload) 
 	return nil
 }
 
+// PostDiscoveryResults sends TLS-bearing IP:port pairs found during a sweep to the server inbox.
+func (c *APIClient) PostDiscoveryResults(networkID string, items []DiscoveryReportItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	body := struct {
+		NetworkID string                `json:"networkId"`
+		Items     []DiscoveryReportItem `json:"items"`
+	}{NetworkID: networkID, Items: items}
+
+	resp, err := c.do("POST", "/api/v1/probe/discovery", body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("POST /probe/discovery: unexpected status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // PostTLSProfile sends the TLS capability profile for a host to the API.
 func (c *APIClient) PostTLSProfile(hostID string, profile TLSProfilePayload) error {
 	resp, err := c.do("POST", "/api/v1/probe/hosts/"+hostID+"/tls-profile", profile)
