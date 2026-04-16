@@ -27,10 +27,10 @@ func NewAPIClient(baseURL, token string) *APIClient {
 
 // ScannerConfig mirrors models.ScannerTokenResponse for the fields the scanner needs.
 type ScannerConfig struct {
-	ID                  string `json:"id"`
-	Name                string `json:"name"`
-	ScanIntervalSeconds int    `json:"scanIntervalSeconds"`
-	ScanConcurrency     int    `json:"scanConcurrency"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	ScanCronExpression string `json:"scanCronExpression"`
+	ScanConcurrency    int    `json:"scanConcurrency"`
 }
 
 // ScannerHost mirrors models.ScannerHost.
