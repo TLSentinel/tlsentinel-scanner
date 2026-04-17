@@ -116,11 +116,10 @@ func run(ctx context.Context, client *internal.APIClient) {
 			} else {
 				mu.Lock()
 				if updated.ScanCronExpression != current.ScanCronExpression {
-					slog.Info("scan schedule updated",
-						"from", current.ScanCronExpression,
-						"to", updated.ScanCronExpression,
-					)
-					c.Remove(entryID)
+					// Add the new entry first. Only remove the old one on
+					// success — otherwise a bad expression leaves the scanner
+					// with no schedule at all, despite the "keeping previous
+					// schedule" log message.
 					newID, addErr := c.AddFunc(updated.ScanCronExpression, scanFunc)
 					if addErr != nil {
 						slog.Error("invalid updated cron expression, keeping previous schedule",
@@ -128,6 +127,11 @@ func run(ctx context.Context, client *internal.APIClient) {
 							"error", addErr,
 						)
 					} else {
+						slog.Info("scan schedule updated",
+							"from", current.ScanCronExpression,
+							"to", updated.ScanCronExpression,
+						)
+						c.Remove(entryID)
 						entryID = newID
 					}
 				}
@@ -141,16 +145,33 @@ func run(ctx context.Context, client *internal.APIClient) {
 					fresh[n.ID] = n
 				}
 
-				// Remove jobs for networks that are gone or have a changed schedule.
+				// Remove jobs for networks that no longer exist in the config.
 				for id, entry := range networkEntries {
-					n, exists := fresh[id]
-					if !exists || n.CronExpression != entry.network.CronExpression {
+					if _, exists := fresh[id]; !exists {
 						c.Remove(entry.entryID)
 						delete(networkEntries, id)
-						if !exists {
-							slog.Info("discovery network removed", "network_id", id)
-						}
+						slog.Info("discovery network removed", "network_id", id)
 					}
+				}
+
+				// Reschedule networks whose cron expression changed. Add new
+				// entry first and only remove the old one on success — a bad
+				// expression must not leave the network unscheduled.
+				for id, entry := range networkEntries {
+					n, exists := fresh[id]
+					if !exists || n.CronExpression == entry.network.CronExpression {
+						continue
+					}
+					newID, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(ctx, client, n) })
+					if addErr != nil {
+						slog.Error("invalid cron expression for network, keeping previous schedule",
+							"network_id", n.ID, "expr", n.CronExpression, "error", addErr)
+						continue
+					}
+					c.Remove(entry.entryID)
+					networkEntries[id] = networkEntry{network: n, entryID: newID}
+					slog.Info("discovery network rescheduled",
+						"network_id", n.ID, "range", n.Range, "schedule", n.CronExpression)
 				}
 
 				// Add jobs for networks not yet scheduled.
