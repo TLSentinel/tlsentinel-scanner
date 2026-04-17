@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -28,6 +29,23 @@ func buildClient() *internal.APIClient {
 	os.Exit(1)
 	}
 	return internal.NewAPIClient(apiURL, apiToken)
+}
+
+// discoverySweepJob returns a cron callback that runs a discovery sweep for
+// the given network, guarded against overlap. Each returned closure has its
+// own atomic flag — a slow sweep for one network does not block sweeps on
+// others, but the same network will not stack concurrent sweeps.
+func discoverySweepJob(ctx context.Context, client *internal.APIClient, n internal.ScannerDiscoveryNetwork) func() {
+	var running atomic.Bool
+	return func() {
+		if !running.CompareAndSwap(false, true) {
+			slog.Warn("skipping discovery sweep: previous sweep still running",
+				"network_id", n.ID, "range", n.Range)
+			return
+		}
+		defer running.Store(false)
+		runDiscoverySweep(ctx, client, n)
+	}
 }
 
 // run is the main scan loop. Retries until the API is reachable, then hands
@@ -60,7 +78,18 @@ func run(ctx context.Context, client *internal.APIClient) {
 	var mu sync.Mutex
 	current := cfg
 
+	// scanRunning prevents overlapping scan cycles: if a cycle is still in
+	// flight when the next cron tick fires, the new invocation is skipped
+	// rather than queued. Keeps goroutine count bounded when a cycle takes
+	// longer than the configured interval.
+	var scanRunning atomic.Bool
 	scanFunc := func() {
+		if !scanRunning.CompareAndSwap(false, true) {
+			slog.Warn("skipping scan cycle: previous cycle still running")
+			return
+		}
+		defer scanRunning.Store(false)
+
 		mu.Lock()
 		concurrency := current.ScanConcurrency
 		mu.Unlock()
@@ -87,7 +116,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 	// Register jobs for any networks already present in the initial config.
 	for _, n := range cfg.Networks {
 		n := n
-		eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(ctx, client, n) })
+		eid, addErr := c.AddFunc(n.CronExpression, discoverySweepJob(ctx, client, n))
 		if addErr != nil {
 			slog.Error("invalid cron expression for network",
 				"network_id", n.ID, "expr", n.CronExpression, "error", addErr)
@@ -162,7 +191,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 					if !exists || n.CronExpression == entry.network.CronExpression {
 						continue
 					}
-					newID, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(ctx, client, n) })
+					newID, addErr := c.AddFunc(n.CronExpression, discoverySweepJob(ctx, client, n))
 					if addErr != nil {
 						slog.Error("invalid cron expression for network, keeping previous schedule",
 							"network_id", n.ID, "expr", n.CronExpression, "error", addErr)
@@ -180,7 +209,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 						continue
 					}
 					n := n
-					eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(ctx, client, n) })
+					eid, addErr := c.AddFunc(n.CronExpression, discoverySweepJob(ctx, client, n))
 					if addErr != nil {
 						slog.Error("invalid cron expression for network",
 							"network_id", n.ID, "expr", n.CronExpression, "error", addErr)
