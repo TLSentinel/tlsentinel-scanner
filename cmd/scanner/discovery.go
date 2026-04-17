@@ -14,7 +14,15 @@ import (
 	"github.com/tlsentinel/tlsentinel-scanner/internal"
 )
 
-const discoveryConcurrency = 50
+const (
+	discoveryConcurrency = 50
+	// maxDiscoveryRangeSize caps the number of IPs any single network can
+	// expand to. Prevents OOM from misconfigured ranges like /8 or 0.0.0.0/0
+	// — at 4 bytes per IP plus overhead, /8 (16M IPs) would allocate ~600MB
+	// before enumeration even begins. 65,536 = /16, which is the largest
+	// subnet a single discovery sweep can reasonably handle.
+	maxDiscoveryRangeSize = 65536
+)
 
 // runDiscoverySweep enumerates every IP:port in the network, probes each for
 // TLS, and posts any findings to the server discovery inbox. Honors ctx so
@@ -140,7 +148,7 @@ func enumerateCIDR(cidr string) ([]string, error) {
 	first := ipToUint32(start) + 1         // skip network address
 	last := first + networkSize(ipNet) - 3 // skip broadcast address
 
-	return uint32RangeToStrings(first, last), nil
+	return uint32RangeToStrings(first, last)
 }
 
 func enumerateHyphenated(s string) ([]string, error) {
@@ -161,7 +169,7 @@ func enumerateHyphenated(s string) ([]string, error) {
 		return nil, fmt.Errorf("range start must not exceed range end: %q", s)
 	}
 
-	return uint32RangeToStrings(first, last), nil
+	return uint32RangeToStrings(first, last)
 }
 
 func ipToUint32(ip net.IP) uint32 {
@@ -181,10 +189,14 @@ func networkSize(ipNet *net.IPNet) uint32 {
 	return ^mask + 1
 }
 
-func uint32RangeToStrings(first, last uint32) []string {
-	ips := make([]string, 0, last-first+1)
+func uint32RangeToStrings(first, last uint32) ([]string, error) {
+	size := uint64(last) - uint64(first) + 1
+	if size > maxDiscoveryRangeSize {
+		return nil, fmt.Errorf("range too large: %d IPs exceeds limit of %d (max /16)", size, maxDiscoveryRangeSize)
+	}
+	ips := make([]string, 0, size)
 	for n := first; n <= last; n++ {
 		ips = append(ips, uint32ToIP(n))
 	}
-	return ips
+	return ips, nil
 }
