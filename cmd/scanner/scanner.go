@@ -87,7 +87,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 	// Register jobs for any networks already present in the initial config.
 	for _, n := range cfg.Networks {
 		n := n
-		eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(client, n) })
+		eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(ctx, client, n) })
 		if addErr != nil {
 			slog.Error("invalid cron expression for network",
 				"network_id", n.ID, "expr", n.CronExpression, "error", addErr)
@@ -159,7 +159,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 						continue
 					}
 					n := n
-					eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(client, n) })
+					eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(ctx, client, n) })
 					if addErr != nil {
 						slog.Error("invalid cron expression for network",
 							"network_id", n.ID, "expr", n.CronExpression, "error", addErr)
@@ -238,7 +238,7 @@ func scanAndReport(ctx context.Context, client *internal.APIClient, host interna
 		"port", host.Port,
 	)
 
-	result := internal.ScanHost(host)
+	result := internal.ScanHost(ctx, host)
 
 	payload := internal.ScanResultPayload{
 		ActiveFingerprint: result.Fingerprint,
@@ -264,7 +264,7 @@ func scanAndReport(ctx context.Context, client *internal.APIClient, host interna
 	}
 
 	// Run TLS profile probe even if cert scan errored — host may still respond.
-	tlsProfile := internal.ProbeTLSProfile(host)
+	tlsProfile := internal.ProbeTLSProfile(ctx, host)
 	if err := client.PostTLSProfile(host.ID, tlsProfile); err != nil {
 		log.Error("failed to post TLS profile", "error", err)
 		return
@@ -289,7 +289,7 @@ func scanAndReportSAML(ctx context.Context, client *internal.APIClient, endpoint
 		"url", endpoint.URL,
 	)
 
-	result := internal.ScanSAML(endpoint)
+	result := internal.ScanSAML(ctx, endpoint)
 
 	if err := client.PostSAMLResult(endpoint.ID, internal.SAMLResultPayload{
 		Error: result.Err,

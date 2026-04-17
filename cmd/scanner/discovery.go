@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"log/slog"
@@ -16,8 +17,9 @@ import (
 const discoveryConcurrency = 50
 
 // runDiscoverySweep enumerates every IP:port in the network, probes each for
-// TLS, and posts any findings to the server discovery inbox.
-func runDiscoverySweep(client *internal.APIClient, network internal.ScannerDiscoveryNetwork) {
+// TLS, and posts any findings to the server discovery inbox. Honors ctx so
+// in-flight probes are cancelled when the scanner is shutting down.
+func runDiscoverySweep(ctx context.Context, client *internal.APIClient, network internal.ScannerDiscoveryNetwork) {
 	if len(network.Ports) == 0 {
 		slog.Warn("discovery network has no ports configured, skipping sweep",
 			"network_id", network.ID,
@@ -49,19 +51,25 @@ func runDiscoverySweep(client *internal.APIClient, network internal.ScannerDisco
 	)
 
 	for _, ip := range ips {
+		if ctx.Err() != nil {
+			break
+		}
 		for _, port := range network.Ports {
+			if ctx.Err() != nil {
+				break
+			}
 			wg.Add(1)
 			sem <- struct{}{}
 			go func(ip string, port int) {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				result := internal.ProbeDiscoveryTarget(ip, port)
+				result := internal.ProbeDiscoveryTarget(ctx, ip, port)
 				if !result.TLSFound {
 					return
 				}
 
-				rdns := internal.ReverseLookup(ip)
+				rdns := internal.ReverseLookup(ctx, ip)
 
 				log := slog.With("network_id", network.ID, "ip", ip, "port", port)
 				if rdns != nil {
