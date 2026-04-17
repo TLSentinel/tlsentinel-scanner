@@ -64,7 +64,12 @@ func fetchMetadata(ctx context.Context, rawURL string) ([]byte, error) {
 	}
 
 	if u.Scheme == "file" {
-		data, err := os.ReadFile(u.Path)
+		f, err := os.Open(u.Path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open metadata file: %w", err)
+		}
+		defer f.Close()
+		data, err := io.ReadAll(io.LimitReader(f, 5<<20)) // 5 MB cap
 		if err != nil {
 			return nil, fmt.Errorf("failed to read metadata file: %w", err)
 		}
