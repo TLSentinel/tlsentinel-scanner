@@ -67,9 +67,20 @@ func runDiscoverySweep(client *internal.APIClient, network internal.ScannerDisco
 				if rdns != nil {
 					log = log.With("rdns", *rdns)
 				}
+				if result.CommonName != nil {
+					log = log.With("common_name", *result.CommonName)
+				}
 				log.Info("TLS service discovered")
 
-				item := internal.DiscoveryReportItem{IP: ip, Port: port, RDNS: rdns}
+				item := internal.DiscoveryReportItem{
+					IP:          ip,
+					Port:        port,
+					RDNS:        rdns,
+					Fingerprint: result.Fingerprint,
+					CommonName:  result.CommonName,
+					SANs:        result.SANs,
+					NotAfter:    result.NotAfter,
+				}
 				if err := client.PostDiscoveryResults(network.ID, []internal.DiscoveryReportItem{item}); err != nil {
 					slog.Error("failed to post discovery result",
 						"network_id", network.ID,
