@@ -79,7 +79,7 @@ func fetchMetadata(ctx context.Context, rawURL string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch SAML metadata: %w", err)
 	}
-	defer resp.Body.Close()
+	defer drainClose(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("SAML metadata returned HTTP %d", resp.StatusCode)

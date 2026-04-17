@@ -91,6 +91,16 @@ type TLSProfilePayload struct {
 	ScanError      *string  `json:"scanError,omitempty"`
 }
 
+// drainClose drains any remaining body bytes and closes it. Using this instead
+// of a bare resp.Body.Close() allows the HTTP transport to return the
+// connection to the pool — otherwise error paths (status != 200, decode fail)
+// leave bytes in the buffer, forcing the transport to shut the connection and
+// build a fresh TCP+TLS handshake on the next call.
+func drainClose(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+}
+
 func (c *APIClient) do(method, path string, body any) (*http.Response, error) {
 	var bodyReader io.Reader
 	if body != nil {
@@ -123,7 +133,7 @@ func (c *APIClient) GetConfig() (ScannerConfig, error) {
 	if err != nil {
 		return ScannerConfig{}, err
 	}
-	defer resp.Body.Close()
+	defer drainClose(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return ScannerConfig{}, fmt.Errorf("GET /probe/config: unexpected status %d", resp.StatusCode)
@@ -142,7 +152,7 @@ func (c *APIClient) GetHosts() ([]ScannerHost, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer drainClose(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GET /probe/hosts: unexpected status %d", resp.StatusCode)
@@ -161,7 +171,7 @@ func (c *APIClient) PostResult(hostID string, result ScanResultPayload) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer drainClose(resp)
 
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("POST /probe/hosts/%s/result: unexpected status %d", hostID, resp.StatusCode)
@@ -175,7 +185,7 @@ func (c *APIClient) GetSAMLEndpoints() ([]ScannerSAMLEndpoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer drainClose(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GET /probe/saml: unexpected status %d", resp.StatusCode)
@@ -194,7 +204,7 @@ func (c *APIClient) PostSAMLResult(endpointID string, result SAMLResultPayload) 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer drainClose(resp)
 
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("POST /probe/saml/%s/result: unexpected status %d", endpointID, resp.StatusCode)
@@ -216,7 +226,7 @@ func (c *APIClient) PostDiscoveryResults(networkID string, items []DiscoveryRepo
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer drainClose(resp)
 
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("POST /probe/discovery: unexpected status %d", resp.StatusCode)
@@ -230,7 +240,7 @@ func (c *APIClient) PostTLSProfile(hostID string, profile TLSProfilePayload) err
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer drainClose(resp)
 
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("POST /probe/hosts/%s/tls-profile: unexpected status %d", hostID, resp.StatusCode)
