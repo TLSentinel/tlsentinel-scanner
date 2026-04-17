@@ -2,6 +2,7 @@ package internal
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -101,7 +102,7 @@ func drainClose(resp *http.Response) {
 	_ = resp.Body.Close()
 }
 
-func (c *APIClient) do(method, path string, body any) (*http.Response, error) {
+func (c *APIClient) do(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -111,7 +112,7 @@ func (c *APIClient) do(method, path string, body any) (*http.Response, error) {
 		bodyReader = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequest(method, c.baseURL+path, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -128,8 +129,8 @@ func (c *APIClient) do(method, path string, body any) (*http.Response, error) {
 }
 
 // GetConfig fetches the scanner's own config from the API.
-func (c *APIClient) GetConfig() (ScannerConfig, error) {
-	resp, err := c.do("GET", "/api/v1/probe/config", nil)
+func (c *APIClient) GetConfig(ctx context.Context) (ScannerConfig, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/probe/config", nil)
 	if err != nil {
 		return ScannerConfig{}, err
 	}
@@ -147,8 +148,8 @@ func (c *APIClient) GetConfig() (ScannerConfig, error) {
 }
 
 // GetHosts returns the list of enabled hosts assigned to this scanner.
-func (c *APIClient) GetHosts() ([]ScannerHost, error) {
-	resp, err := c.do("GET", "/api/v1/probe/hosts", nil)
+func (c *APIClient) GetHosts(ctx context.Context) ([]ScannerHost, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/probe/hosts", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -166,8 +167,8 @@ func (c *APIClient) GetHosts() ([]ScannerHost, error) {
 }
 
 // PostResult sends a scan result for a host to the API.
-func (c *APIClient) PostResult(hostID string, result ScanResultPayload) error {
-	resp, err := c.do("POST", "/api/v1/probe/hosts/"+hostID+"/result", result)
+func (c *APIClient) PostResult(ctx context.Context, hostID string, result ScanResultPayload) error {
+	resp, err := c.do(ctx, "POST", "/api/v1/probe/hosts/"+hostID+"/result", result)
 	if err != nil {
 		return err
 	}
@@ -180,8 +181,8 @@ func (c *APIClient) PostResult(hostID string, result ScanResultPayload) error {
 }
 
 // GetSAMLEndpoints returns the list of enabled SAML endpoints assigned to this scanner.
-func (c *APIClient) GetSAMLEndpoints() ([]ScannerSAMLEndpoint, error) {
-	resp, err := c.do("GET", "/api/v1/probe/saml", nil)
+func (c *APIClient) GetSAMLEndpoints(ctx context.Context) ([]ScannerSAMLEndpoint, error) {
+	resp, err := c.do(ctx, "GET", "/api/v1/probe/saml", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -199,8 +200,8 @@ func (c *APIClient) GetSAMLEndpoints() ([]ScannerSAMLEndpoint, error) {
 }
 
 // PostSAMLResult sends a SAML metadata scan result for an endpoint to the API.
-func (c *APIClient) PostSAMLResult(endpointID string, result SAMLResultPayload) error {
-	resp, err := c.do("POST", "/api/v1/probe/saml/"+endpointID+"/result", result)
+func (c *APIClient) PostSAMLResult(ctx context.Context, endpointID string, result SAMLResultPayload) error {
+	resp, err := c.do(ctx, "POST", "/api/v1/probe/saml/"+endpointID+"/result", result)
 	if err != nil {
 		return err
 	}
@@ -213,7 +214,7 @@ func (c *APIClient) PostSAMLResult(endpointID string, result SAMLResultPayload) 
 }
 
 // PostDiscoveryResults sends TLS-bearing IP:port pairs found during a sweep to the server inbox.
-func (c *APIClient) PostDiscoveryResults(networkID string, items []DiscoveryReportItem) error {
+func (c *APIClient) PostDiscoveryResults(ctx context.Context, networkID string, items []DiscoveryReportItem) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -222,7 +223,7 @@ func (c *APIClient) PostDiscoveryResults(networkID string, items []DiscoveryRepo
 		Items     []DiscoveryReportItem `json:"items"`
 	}{NetworkID: networkID, Items: items}
 
-	resp, err := c.do("POST", "/api/v1/probe/discovery", body)
+	resp, err := c.do(ctx, "POST", "/api/v1/probe/discovery", body)
 	if err != nil {
 		return err
 	}
@@ -235,8 +236,8 @@ func (c *APIClient) PostDiscoveryResults(networkID string, items []DiscoveryRepo
 }
 
 // PostTLSProfile sends the TLS capability profile for a host to the API.
-func (c *APIClient) PostTLSProfile(hostID string, profile TLSProfilePayload) error {
-	resp, err := c.do("POST", "/api/v1/probe/hosts/"+hostID+"/tls-profile", profile)
+func (c *APIClient) PostTLSProfile(ctx context.Context, hostID string, profile TLSProfilePayload) error {
+	resp, err := c.do(ctx, "POST", "/api/v1/probe/hosts/"+hostID+"/tls-profile", profile)
 	if err != nil {
 		return err
 	}

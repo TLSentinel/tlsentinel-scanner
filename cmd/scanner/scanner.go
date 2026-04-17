@@ -33,7 +33,7 @@ func buildClient() *internal.APIClient {
 // run is the main scan loop. Retries until the API is reachable, then hands
 // scheduling to go-cron and polls for config changes until ctx is cancelled.
 func run(ctx context.Context, client *internal.APIClient) {
-	cfg, err := client.GetConfig()
+	cfg, err := client.GetConfig(ctx)
 	for err != nil {
 		slog.Warn("API server unreachable, will retry",
 			"error", err,
@@ -45,7 +45,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 			return
 		case <-time.After(retryInterval):
 		}
-		cfg, err = client.GetConfig()
+		cfg, err = client.GetConfig(ctx)
 	}
 
 	slog.Info("scanner started",
@@ -110,7 +110,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 			return
 		case <-ticker.C:
 			// ── Refresh host scan config ──────────────────────────────────
-			updated, err := client.GetConfig()
+			updated, err := client.GetConfig(ctx)
 			if err != nil {
 				slog.Warn("failed to refresh config, keeping previous values", "error", err)
 			} else {
@@ -180,13 +180,13 @@ func runScanCycle(ctx context.Context, client *internal.APIClient, concurrency i
 		concurrency = 5
 	}
 
-	hosts, err := client.GetHosts()
+	hosts, err := client.GetHosts(ctx)
 	if err != nil {
 		slog.Error("failed to fetch hosts", "error", err)
 		return
 	}
 
-	samlEndpoints, err := client.GetSAMLEndpoints()
+	samlEndpoints, err := client.GetSAMLEndpoints(ctx)
 	if err != nil {
 		slog.Error("failed to fetch SAML endpoints", "error", err)
 		return
@@ -248,7 +248,7 @@ func scanAndReport(ctx context.Context, client *internal.APIClient, host interna
 		PEMs:              result.PEMs,
 	}
 
-	if err := client.PostResult(host.ID, payload); err != nil {
+	if err := client.PostResult(ctx, host.ID, payload); err != nil {
 		log.Error("failed to post scan result", "error", err)
 		return
 	}
@@ -265,7 +265,7 @@ func scanAndReport(ctx context.Context, client *internal.APIClient, host interna
 
 	// Run TLS profile probe even if cert scan errored — host may still respond.
 	tlsProfile := internal.ProbeTLSProfile(ctx, host)
-	if err := client.PostTLSProfile(host.ID, tlsProfile); err != nil {
+	if err := client.PostTLSProfile(ctx, host.ID, tlsProfile); err != nil {
 		log.Error("failed to post TLS profile", "error", err)
 		return
 	}
@@ -291,7 +291,7 @@ func scanAndReportSAML(ctx context.Context, client *internal.APIClient, endpoint
 
 	result := internal.ScanSAML(ctx, endpoint)
 
-	if err := client.PostSAMLResult(endpoint.ID, internal.SAMLResultPayload{
+	if err := client.PostSAMLResult(ctx, endpoint.ID, internal.SAMLResultPayload{
 		Error: result.Err,
 		Certs: result.Certs,
 	}); err != nil {

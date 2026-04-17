@@ -97,7 +97,7 @@ func runDiscoverySweep(ctx context.Context, client *internal.APIClient, network 
 					SANs:        result.SANs,
 					NotAfter:    result.NotAfter,
 				}
-				if err := client.PostDiscoveryResults(network.ID, []internal.DiscoveryReportItem{item}); err != nil {
+				if err := client.PostDiscoveryResults(ctx, network.ID, []internal.DiscoveryReportItem{item}); err != nil {
 					slog.Error("failed to post discovery result",
 						"network_id", network.ID,
 						"ip", ip,
