@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/tlsentinel/tlsentinel-scanner/internal"
 )
@@ -22,6 +23,13 @@ const (
 	// before enumeration even begins. 65,536 = /16, which is the largest
 	// subnet a single discovery sweep can reasonably handle.
 	maxDiscoveryRangeSize = 65536
+
+	// Retry policy for posting discovery findings. A brief transient outage
+	// (API restart, flaky link) must not silently lose a discovery result —
+	// the next sweep could be hours away. 4 attempts with doubling backoff
+	// gives ~3.5s total wait (0.5 + 1 + 2) before giving up.
+	discoveryPostMaxAttempts    = 4
+	discoveryPostInitialBackoff = 500 * time.Millisecond
 )
 
 // runDiscoverySweep enumerates every IP:port in the network, probes each for
@@ -97,8 +105,8 @@ func runDiscoverySweep(ctx context.Context, client *internal.APIClient, network 
 					SANs:        result.SANs,
 					NotAfter:    result.NotAfter,
 				}
-				if err := client.PostDiscoveryResults(ctx, network.ID, []internal.DiscoveryReportItem{item}); err != nil {
-					slog.Error("failed to post discovery result",
+				if err := postDiscoveryWithRetry(ctx, client, network.ID, []internal.DiscoveryReportItem{item}); err != nil {
+					slog.Error("failed to post discovery result after retries",
 						"network_id", network.ID,
 						"ip", ip,
 						"port", port,
@@ -187,6 +195,40 @@ func networkSize(ipNet *net.IPNet) uint32 {
 	buf.Write(ipNet.Mask)
 	mask := binary.BigEndian.Uint32(buf.Bytes())
 	return ^mask + 1
+}
+
+// postDiscoveryWithRetry posts discovery items with bounded exponential
+// backoff. Returns nil on success, the last error after all attempts fail,
+// or the current error immediately if ctx is cancelled (shutdown must not
+// be delayed by retries).
+func postDiscoveryWithRetry(ctx context.Context, client *internal.APIClient, networkID string, items []internal.DiscoveryReportItem) error {
+	backoff := discoveryPostInitialBackoff
+	var err error
+	for attempt := 1; attempt <= discoveryPostMaxAttempts; attempt++ {
+		err = client.PostDiscoveryResults(ctx, networkID, items)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		if attempt == discoveryPostMaxAttempts {
+			break
+		}
+		slog.Warn("failed to post discovery result, retrying",
+			"network_id", networkID,
+			"attempt", attempt,
+			"next_retry_in", backoff,
+			"error", err,
+		)
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+	return err
 }
 
 func uint32RangeToStrings(first, last uint32) ([]string, error) {
