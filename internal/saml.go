@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -56,25 +57,34 @@ type xmlX509Data struct {
 
 // fetchMetadata retrieves raw metadata bytes from an http://, https://, or
 // file:// URL. For file:// URLs the path is read directly from disk.
-func fetchMetadata(rawURL string) ([]byte, error) {
+func fetchMetadata(ctx context.Context, rawURL string) ([]byte, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid metadata URL: %w", err)
 	}
 
 	if u.Scheme == "file" {
-		data, err := os.ReadFile(u.Path)
+		f, err := os.Open(u.Path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open metadata file: %w", err)
+		}
+		defer f.Close()
+		data, err := io.ReadAll(io.LimitReader(f, 5<<20)) // 5 MB cap
 		if err != nil {
 			return nil, fmt.Errorf("failed to read metadata file: %w", err)
 		}
 		return data, nil
 	}
 
-	resp, err := samlHTTPClient.Get(rawURL) //nolint:noctx // best-effort, timeout set on client
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build SAML metadata request: %w", err)
+	}
+	resp, err := samlHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch SAML metadata: %w", err)
 	}
-	defer resp.Body.Close()
+	defer drainClose(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("SAML metadata returned HTTP %d", resp.StatusCode)
@@ -90,8 +100,8 @@ func fetchMetadata(rawURL string) ([]byte, error) {
 // ScanSAML fetches the SAML metadata at endpoint.URL, extracts signing and
 // encryption certificates, and returns them with their declared use labels.
 // Supports http://, https://, and file:// URLs.
-func ScanSAML(endpoint ScannerSAMLEndpoint) SAMLScanResult {
-	body, err := fetchMetadata(endpoint.URL)
+func ScanSAML(ctx context.Context, endpoint ScannerSAMLEndpoint) SAMLScanResult {
+	body, err := fetchMetadata(ctx, endpoint.URL)
 	if err != nil {
 		msg := err.Error()
 		return SAMLScanResult{Err: &msg}

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -30,10 +31,27 @@ func buildClient() *internal.APIClient {
 	return internal.NewAPIClient(apiURL, apiToken)
 }
 
+// discoverySweepJob returns a cron callback that runs a discovery sweep for
+// the given network, guarded against overlap. Each returned closure has its
+// own atomic flag — a slow sweep for one network does not block sweeps on
+// others, but the same network will not stack concurrent sweeps.
+func discoverySweepJob(ctx context.Context, client *internal.APIClient, n internal.ScannerDiscoveryNetwork) func() {
+	var running atomic.Bool
+	return func() {
+		if !running.CompareAndSwap(false, true) {
+			slog.Warn("skipping discovery sweep: previous sweep still running",
+				"network_id", n.ID, "range", n.Range)
+			return
+		}
+		defer running.Store(false)
+		runDiscoverySweep(ctx, client, n)
+	}
+}
+
 // run is the main scan loop. Retries until the API is reachable, then hands
 // scheduling to go-cron and polls for config changes until ctx is cancelled.
 func run(ctx context.Context, client *internal.APIClient) {
-	cfg, err := client.GetConfig()
+	cfg, err := client.GetConfig(ctx)
 	for err != nil {
 		slog.Warn("API server unreachable, will retry",
 			"error", err,
@@ -45,7 +63,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 			return
 		case <-time.After(retryInterval):
 		}
-		cfg, err = client.GetConfig()
+		cfg, err = client.GetConfig(ctx)
 	}
 
 	slog.Info("scanner started",
@@ -60,7 +78,18 @@ func run(ctx context.Context, client *internal.APIClient) {
 	var mu sync.Mutex
 	current := cfg
 
+	// scanRunning prevents overlapping scan cycles: if a cycle is still in
+	// flight when the next cron tick fires, the new invocation is skipped
+	// rather than queued. Keeps goroutine count bounded when a cycle takes
+	// longer than the configured interval.
+	var scanRunning atomic.Bool
 	scanFunc := func() {
+		if !scanRunning.CompareAndSwap(false, true) {
+			slog.Warn("skipping scan cycle: previous cycle still running")
+			return
+		}
+		defer scanRunning.Store(false)
+
 		mu.Lock()
 		concurrency := current.ScanConcurrency
 		mu.Unlock()
@@ -87,7 +116,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 	// Register jobs for any networks already present in the initial config.
 	for _, n := range cfg.Networks {
 		n := n
-		eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(client, n) })
+		eid, addErr := c.AddFunc(n.CronExpression, discoverySweepJob(ctx, client, n))
 		if addErr != nil {
 			slog.Error("invalid cron expression for network",
 				"network_id", n.ID, "expr", n.CronExpression, "error", addErr)
@@ -110,17 +139,16 @@ func run(ctx context.Context, client *internal.APIClient) {
 			return
 		case <-ticker.C:
 			// ── Refresh host scan config ──────────────────────────────────
-			updated, err := client.GetConfig()
+			updated, err := client.GetConfig(ctx)
 			if err != nil {
 				slog.Warn("failed to refresh config, keeping previous values", "error", err)
 			} else {
 				mu.Lock()
 				if updated.ScanCronExpression != current.ScanCronExpression {
-					slog.Info("scan schedule updated",
-						"from", current.ScanCronExpression,
-						"to", updated.ScanCronExpression,
-					)
-					c.Remove(entryID)
+					// Add the new entry first. Only remove the old one on
+					// success — otherwise a bad expression leaves the scanner
+					// with no schedule at all, despite the "keeping previous
+					// schedule" log message.
 					newID, addErr := c.AddFunc(updated.ScanCronExpression, scanFunc)
 					if addErr != nil {
 						slog.Error("invalid updated cron expression, keeping previous schedule",
@@ -128,6 +156,11 @@ func run(ctx context.Context, client *internal.APIClient) {
 							"error", addErr,
 						)
 					} else {
+						slog.Info("scan schedule updated",
+							"from", current.ScanCronExpression,
+							"to", updated.ScanCronExpression,
+						)
+						c.Remove(entryID)
 						entryID = newID
 					}
 				}
@@ -141,16 +174,33 @@ func run(ctx context.Context, client *internal.APIClient) {
 					fresh[n.ID] = n
 				}
 
-				// Remove jobs for networks that are gone or have a changed schedule.
+				// Remove jobs for networks that no longer exist in the config.
 				for id, entry := range networkEntries {
-					n, exists := fresh[id]
-					if !exists || n.CronExpression != entry.network.CronExpression {
+					if _, exists := fresh[id]; !exists {
 						c.Remove(entry.entryID)
 						delete(networkEntries, id)
-						if !exists {
-							slog.Info("discovery network removed", "network_id", id)
-						}
+						slog.Info("discovery network removed", "network_id", id)
 					}
+				}
+
+				// Reschedule networks whose cron expression changed. Add new
+				// entry first and only remove the old one on success — a bad
+				// expression must not leave the network unscheduled.
+				for id, entry := range networkEntries {
+					n, exists := fresh[id]
+					if !exists || n.CronExpression == entry.network.CronExpression {
+						continue
+					}
+					newID, addErr := c.AddFunc(n.CronExpression, discoverySweepJob(ctx, client, n))
+					if addErr != nil {
+						slog.Error("invalid cron expression for network, keeping previous schedule",
+							"network_id", n.ID, "expr", n.CronExpression, "error", addErr)
+						continue
+					}
+					c.Remove(entry.entryID)
+					networkEntries[id] = networkEntry{network: n, entryID: newID}
+					slog.Info("discovery network rescheduled",
+						"network_id", n.ID, "range", n.Range, "schedule", n.CronExpression)
 				}
 
 				// Add jobs for networks not yet scheduled.
@@ -159,7 +209,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 						continue
 					}
 					n := n
-					eid, addErr := c.AddFunc(n.CronExpression, func() { runDiscoverySweep(client, n) })
+					eid, addErr := c.AddFunc(n.CronExpression, discoverySweepJob(ctx, client, n))
 					if addErr != nil {
 						slog.Error("invalid cron expression for network",
 							"network_id", n.ID, "expr", n.CronExpression, "error", addErr)
@@ -180,13 +230,13 @@ func runScanCycle(ctx context.Context, client *internal.APIClient, concurrency i
 		concurrency = 5
 	}
 
-	hosts, err := client.GetHosts()
+	hosts, err := client.GetHosts(ctx)
 	if err != nil {
 		slog.Error("failed to fetch hosts", "error", err)
 		return
 	}
 
-	samlEndpoints, err := client.GetSAMLEndpoints()
+	samlEndpoints, err := client.GetSAMLEndpoints(ctx)
 	if err != nil {
 		slog.Error("failed to fetch SAML endpoints", "error", err)
 		return
@@ -238,7 +288,7 @@ func scanAndReport(ctx context.Context, client *internal.APIClient, host interna
 		"port", host.Port,
 	)
 
-	result := internal.ScanHost(host)
+	result := internal.ScanHost(ctx, host)
 
 	payload := internal.ScanResultPayload{
 		ActiveFingerprint: result.Fingerprint,
@@ -248,7 +298,7 @@ func scanAndReport(ctx context.Context, client *internal.APIClient, host interna
 		PEMs:              result.PEMs,
 	}
 
-	if err := client.PostResult(host.ID, payload); err != nil {
+	if err := client.PostResult(ctx, host.ID, payload); err != nil {
 		log.Error("failed to post scan result", "error", err)
 		return
 	}
@@ -264,8 +314,8 @@ func scanAndReport(ctx context.Context, client *internal.APIClient, host interna
 	}
 
 	// Run TLS profile probe even if cert scan errored — host may still respond.
-	tlsProfile := internal.ProbeTLSProfile(host)
-	if err := client.PostTLSProfile(host.ID, tlsProfile); err != nil {
+	tlsProfile := internal.ProbeTLSProfile(ctx, host)
+	if err := client.PostTLSProfile(ctx, host.ID, tlsProfile); err != nil {
 		log.Error("failed to post TLS profile", "error", err)
 		return
 	}
@@ -289,9 +339,9 @@ func scanAndReportSAML(ctx context.Context, client *internal.APIClient, endpoint
 		"url", endpoint.URL,
 	)
 
-	result := internal.ScanSAML(endpoint)
+	result := internal.ScanSAML(ctx, endpoint)
 
-	if err := client.PostSAMLResult(endpoint.ID, internal.SAMLResultPayload{
+	if err := client.PostSAMLResult(ctx, endpoint.ID, internal.SAMLResultPayload{
 		Error: result.Err,
 		Certs: result.Certs,
 	}); err != nil {

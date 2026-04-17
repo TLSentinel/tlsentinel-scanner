@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/pem"
@@ -60,7 +61,7 @@ func certToPEM(der []byte) string {
 
 // ScanHost opens a TLS connection to host and collects certificate chain data.
 // InsecureSkipVerify is intentional — we are collecting certs, not validating them.
-func ScanHost(host ScannerHost) ScanResult {
+func ScanHost(ctx context.Context, host ScannerHost) ScanResult {
 	addr := host.DNSName
 	if host.IPAddress != nil && *host.IPAddress != "" {
 		addr = *host.IPAddress
@@ -76,12 +77,11 @@ func ScanHost(host ScannerHost) ScanResult {
 		allSuites = append(allSuites, s.ID)
 	}
 
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	conn, err := ztls.DialWithDialer(dialer, "tcp", target, &ztls.Config{
+	conn, err := dialTLSContext(ctx, 10*time.Second, "tcp", target, &ztls.Config{
 		ServerName:         host.DNSName,
-		InsecureSkipVerify: true,             //nolint:gosec // Intentional: collecting certs, not validating
+		InsecureSkipVerify: true,              //nolint:gosec // Intentional: collecting certs, not validating
 		MinVersion:         ztls.VersionTLS10, // reach TLS 1.0/1.1 legacy endpoints
-		CipherSuites:       allSuites,        // include RSA key exchange for legacy servers
+		CipherSuites:       allSuites,         // include RSA key exchange for legacy servers
 	})
 	if err != nil {
 		errStr := err.Error()

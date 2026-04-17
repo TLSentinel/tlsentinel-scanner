@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"net"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 const (
 	discoveryDialTimeout = 3 * time.Second
+	reverseLookupTimeout = 2 * time.Second
 )
 
 // DiscoveryResult is the outcome of probing a single IP:port for TLS.
@@ -37,8 +39,11 @@ type DiscoveryReportItem struct {
 }
 
 // ReverseLookup returns the first PTR record for ip, or nil if none is found.
-func ReverseLookup(ip string) *string {
-	names, err := net.LookupAddr(ip)
+// Bounded by reverseLookupTimeout so a hung DNS resolver cannot stall a sweep.
+func ReverseLookup(ctx context.Context, ip string) *string {
+	lookupCtx, cancel := context.WithTimeout(ctx, reverseLookupTimeout)
+	defer cancel()
+	names, err := net.DefaultResolver.LookupAddr(lookupCtx, ip)
 	if err != nil || len(names) == 0 {
 		return nil
 	}
@@ -56,12 +61,11 @@ func ReverseLookup(ip string) *string {
 // so ServerName is left empty.
 // MinVersion is SSL 3.0 so that ancient servers are also detected; the excrypto
 // fork exposes VersionSSL30 specifically for this scanning use case.
-func ProbeDiscoveryTarget(ip string, port int) DiscoveryResult {
+func ProbeDiscoveryTarget(ctx context.Context, ip string, port int) DiscoveryResult {
 	target := net.JoinHostPort(ip, strconv.Itoa(port))
 	result := DiscoveryResult{IP: ip, Port: port}
 
-	dialer := &net.Dialer{Timeout: discoveryDialTimeout}
-	conn, err := ztls.DialWithDialer(dialer, "tcp", target, &ztls.Config{
+	conn, err := dialTLSContext(ctx, discoveryDialTimeout, "tcp", target, &ztls.Config{
 		InsecureSkipVerify: true,              //nolint:gosec // Intentional: detecting TLS, not validating
 		MinVersion:         ztls.VersionSSL30, // reach even SSL 3.0 legacy endpoints
 		CipherSuites:       allCipherSuiteIDs, // full suite list (secure + insecure) from probe.go
