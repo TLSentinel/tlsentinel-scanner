@@ -341,10 +341,18 @@ func scanAndReportSAML(ctx context.Context, client *internal.APIClient, endpoint
 
 	result := internal.ScanSAML(ctx, endpoint)
 
-	if err := client.PostSAMLResult(ctx, endpoint.ID, internal.SAMLResultPayload{
+	payload := internal.SAMLResultPayload{
 		Error: result.Err,
 		Certs: result.Certs,
-	}); err != nil {
+	}
+	if result.Err == nil {
+		xml, sha := result.XML, result.Sha256
+		payload.MetadataXML = &xml
+		payload.MetadataXMLSha256 = &sha
+		payload.Metadata = result.Metadata
+	}
+
+	if err := client.PostSAMLResult(ctx, endpoint.ID, payload); err != nil {
 		log.Error("failed to post SAML scan result", "error", err)
 		return
 	}

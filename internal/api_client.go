@@ -75,10 +75,53 @@ type SAMLCertPayload struct {
 	Use string `json:"use"` // "signing" or "encryption"
 }
 
+// SAMLEndpointPayload is one SSO/SLO/ACS endpoint declared in the metadata.
+type SAMLEndpointPayload struct {
+	Binding   string `json:"binding"`
+	Location  string `json:"location"`
+	Index     *int   `json:"index,omitempty"`
+	IsDefault *bool  `json:"isDefault,omitempty"`
+}
+
+// SAMLContactPayload is one ContactPerson from the metadata.
+type SAMLContactPayload struct {
+	Type         string  `json:"type"`
+	GivenName    *string `json:"givenName,omitempty"`
+	Surname      *string `json:"surname,omitempty"`
+	EmailAddress *string `json:"emailAddress,omitempty"`
+	Company      *string `json:"company,omitempty"`
+}
+
+// SAMLOrganizationPayload is the Organization element.
+type SAMLOrganizationPayload struct {
+	Name        *string `json:"name,omitempty"`
+	DisplayName *string `json:"displayName,omitempty"`
+	URL         *string `json:"url,omitempty"`
+}
+
+// SAMLMetadataPayload mirrors models.SAMLMetadataPayload.
+type SAMLMetadataPayload struct {
+	EntityID             *string                  `json:"entityId,omitempty"`
+	ValidUntil           *time.Time               `json:"validUntil,omitempty"`
+	CacheDuration        *string                  `json:"cacheDuration,omitempty"`
+	Role                 *string                  `json:"role,omitempty"`
+	SingleSignOn         []SAMLEndpointPayload    `json:"singleSignOn,omitempty"`
+	SingleLogout         []SAMLEndpointPayload    `json:"singleLogout,omitempty"`
+	AssertionConsumer    []SAMLEndpointPayload    `json:"assertionConsumer,omitempty"`
+	NameIDFormats        []string                 `json:"nameIdFormats,omitempty"`
+	Organization         *SAMLOrganizationPayload `json:"organization,omitempty"`
+	Contacts             []SAMLContactPayload     `json:"contacts,omitempty"`
+	WantAssertionsSigned *bool                    `json:"wantAssertionsSigned,omitempty"`
+	AuthnRequestsSigned  *bool                    `json:"authnRequestsSigned,omitempty"`
+}
+
 // SAMLResultPayload mirrors models.SAMLScanResultRequest.
 type SAMLResultPayload struct {
-	Error *string           `json:"error"`
-	Certs []SAMLCertPayload `json:"certs"`
+	Error             *string              `json:"error"`
+	Certs             []SAMLCertPayload    `json:"certs"`
+	MetadataXML       *string              `json:"metadataXml,omitempty"`
+	MetadataXMLSha256 *string              `json:"metadataXmlSha256,omitempty"`
+	Metadata          *SAMLMetadataPayload `json:"metadata,omitempty"`
 }
 
 // TLSProfilePayload mirrors models.TLSProfileIngestRequest.
