@@ -43,13 +43,16 @@ func ProbeTLSProfile(ctx context.Context, host ScannerHost) TLSProfilePayload {
 
 	// ── TLS version support ────────────────────────────────────────────────
 	// Each probe pins both MinVersion and MaxVersion so the server must accept
-	// exactly that version or reject the handshake.
+	// exactly that version or reject the handshake. SSL 3.0 is probed via the
+	// excrypto fork (stdlib crypto/tls has removed SSL 3.0 entirely) so that
+	// SSLv3-POODLE can be flagged from the version set alone.
+	payload.SSL30 = probeVersion(ctx, target, host.DNSName, ztls.VersionSSL30)
 	payload.TLS10 = probeVersion(ctx, target, host.DNSName, ztls.VersionTLS10)
 	payload.TLS11 = probeVersion(ctx, target, host.DNSName, ztls.VersionTLS11)
 	payload.TLS12 = probeVersion(ctx, target, host.DNSName, ztls.VersionTLS12)
 	payload.TLS13 = probeVersion(ctx, target, host.DNSName, ztls.VersionTLS13)
 
-	if !payload.TLS10 && !payload.TLS11 && !payload.TLS12 && !payload.TLS13 {
+	if !payload.SSL30 && !payload.TLS10 && !payload.TLS11 && !payload.TLS12 && !payload.TLS13 {
 		errStr := "no TLS version accepted by server"
 		payload.ScanError = &errStr
 		return payload

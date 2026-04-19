@@ -83,6 +83,7 @@ type SAMLResultPayload struct {
 
 // TLSProfilePayload mirrors models.TLSProfileIngestRequest.
 type TLSProfilePayload struct {
+	SSL30          bool     `json:"ssl30"`
 	TLS10          bool     `json:"tls10"`
 	TLS11          bool     `json:"tls11"`
 	TLS12          bool     `json:"tls12"`
