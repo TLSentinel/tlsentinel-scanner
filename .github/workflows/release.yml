@@ -33,12 +33,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+
       - name: Build and push Docker
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}:${{ env.VERSION_BARE }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ env.VERSION_BARE }}
             COMMIT=${{ github.sha }}
@@ -58,6 +69,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: dist/*
 
   release-windows:
@@ -113,6 +125,7 @@ jobs:
       - name: Add to Release
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: dist/tlsentinel-scanner-windows-amd64.exe
 
   release-macos:
@@ -140,6 +153,7 @@ jobs:
       - name: Add to Release
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/tlsentinel-scanner-darwin-arm64
             dist/tlsentinel-scanner-darwin-arm64.zip
