@@ -24,7 +24,15 @@ func Build() {
 	useJSON := resolveFormat(os.Getenv("TLSENTINEL_LOG_FORMAT"))
 
 	var handler slog.Handler
-	opts := &slog.HandlerOptions{Level: level}
+	opts := &slog.HandlerOptions{
+		Level: level,
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				a.Value = slog.TimeValue(a.Value.Time().UTC())
+			}
+			return a
+		},
+	}
 	if useJSON {
 		handler = slog.NewJSONHandler(os.Stdout, opts)
 	} else {
