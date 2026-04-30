@@ -20,6 +20,11 @@ on breaking changes, `P` is bugfix-only. Pre-release tags (`-beta.N`,
   zero or negative server value still falls through to `runScanCycle`'s own
   default (5) — the cap never *raises* concurrency, it only lowers absurd
   requests.
+- **Concurrency-change log on config refresh.** The config-poll loop already
+  logged schedule changes; it now also logs when `ScanConcurrency` changes
+  between polls (`"scan concurrency updated" from=N to=M`), mirroring the
+  existing schedule-update pattern so a UI edit leaves a breadcrumb in the
+  scanner log instead of taking effect silently.
 
 ## v2026.5.0 — 2026-04-27
 

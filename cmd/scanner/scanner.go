@@ -209,6 +209,12 @@ func run(ctx context.Context, client *internal.APIClient) {
 						entryID = newID
 					}
 				}
+				if updated.ScanConcurrency != current.ScanConcurrency {
+					slog.Info("scan concurrency updated",
+						"from", current.ScanConcurrency,
+						"to", updated.ScanConcurrency,
+					)
+				}
 				current = updated
 				mu.Unlock()
 
