@@ -105,12 +105,20 @@ func run(ctx context.Context, client *internal.APIClient) {
 
 	maxConcurrency := loadMaxConcurrency()
 
+	// Two distinct concurrency bounds get logged here so an operator can
+	// reason about both at a glance:
+	//   - scan_concurrency / scan_max_concurrency: per-cycle endpoint scans
+	//     (host TLS handshakes + SAML metadata fetches). Server-supplied,
+	//     clamped by the local cap.
+	//   - discovery_concurrency: hardcoded ceiling for any single network
+	//     discovery sweep. Independent of server config.
 	slog.Info("scanner started",
 		"id", cfg.ID,
 		"name", cfg.Name,
 		"schedule", cfg.ScanCronExpression,
-		"concurrency", cfg.ScanConcurrency,
-		"max_concurrency", maxConcurrency,
+		"scan_concurrency", cfg.ScanConcurrency,
+		"scan_max_concurrency", maxConcurrency,
+		"discovery_concurrency", discoveryConcurrency,
 	)
 
 	// current holds the live config; mu protects it from concurrent access
@@ -135,7 +143,7 @@ func run(ctx context.Context, client *internal.APIClient) {
 		mu.Unlock()
 		concurrency := clampConcurrency(serverConcurrency, maxConcurrency)
 		if concurrency != serverConcurrency && serverConcurrency > 0 {
-			slog.Warn("clamping server-supplied concurrency to local cap",
+			slog.Warn("clamping server-supplied scan concurrency to local cap",
 				"requested", serverConcurrency, "cap", concurrency)
 		}
 		runScanCycle(ctx, client, concurrency)

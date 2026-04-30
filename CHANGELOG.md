@@ -11,15 +11,25 @@ on breaking changes, `P` is bugfix-only. Pre-release tags (`-beta.N`,
 
 ### Added
 
-- **Hard local concurrency cap.** New optional environment variable
-  `TLSENTINEL_SCANNER_MAX_CONCURRENCY` (default `64`) clamps the server-supplied
-  per-cycle scan concurrency so a misconfigured or compromised server cannot
-  push the scanner past what its host can handle without FD or goroutine
-  exhaustion. Server values at or below the cap pass through unchanged; values
-  above the cap are pulled down with a single warning log line per cycle. A
-  zero or negative server value still falls through to `runScanCycle`'s own
-  default (5) — the cap never *raises* concurrency, it only lowers absurd
-  requests.
+- **Hard local concurrency cap on per-cycle endpoint scans.** New optional
+  environment variable `TLSENTINEL_SCANNER_MAX_CONCURRENCY` (default `64`)
+  clamps the server-supplied `ScanConcurrency` so a misconfigured or compromised
+  server cannot push the scanner past what its host can handle without FD or
+  goroutine exhaustion. The cap covers per-cycle endpoint scans only — host
+  TLS handshakes and SAML metadata fetches. Network discovery sweeps continue
+  to use their own independent in-binary ceiling
+  (`discoveryConcurrency = 50`); discovery is server-config-independent so the
+  same threat model does not apply. Server values at or below the cap pass
+  through unchanged; values above the cap are pulled down with a single
+  warning log line per cycle (`"clamping server-supplied scan concurrency to
+  local cap"`). A zero or negative server value still falls through to
+  `runScanCycle`'s own default (5) — the cap never *raises* concurrency, it
+  only lowers absurd requests.
+- **Clearer concurrency fields in the startup log.** The "scanner started"
+  line now uses `scan_concurrency` and `scan_max_concurrency` instead of the
+  ambiguous `concurrency` / `max_concurrency`, and also surfaces
+  `discovery_concurrency` so an operator can see all the bounds at a glance
+  rather than wondering whether the cap covers discovery too. (It doesn't.)
 - **Concurrency-change log on config refresh.** The config-poll loop already
   logged schedule changes; it now also logs when `ScanConcurrency` changes
   between polls (`"scan concurrency updated" from=N to=M`), mirroring the
