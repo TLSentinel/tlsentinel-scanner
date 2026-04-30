@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,7 +17,43 @@ import (
 const (
 	retryInterval      = 15 * time.Second
 	configPollInterval = 30 * time.Second
+
+	// defaultMaxConcurrency is the hard local ceiling on per-cycle scan
+	// concurrency when TLSENTINEL_SCANNER_MAX_CONCURRENCY is unset. Sized
+	// to leave headroom for the host's FD limit on a default Linux box.
+	defaultMaxConcurrency = 64
 )
+
+// loadMaxConcurrency reads TLSENTINEL_SCANNER_MAX_CONCURRENCY and returns the
+// hard local ceiling on per-cycle concurrency. The server config also supplies
+// a concurrency value; this cap clamps it so a misconfigured (or compromised)
+// server can't push the scanner past what its host can handle without FD or
+// goroutine exhaustion. Falls back to defaultMaxConcurrency on unset, empty,
+// or invalid input.
+func loadMaxConcurrency() int {
+	raw := os.Getenv("TLSENTINEL_SCANNER_MAX_CONCURRENCY")
+	if raw == "" {
+		return defaultMaxConcurrency
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		slog.Warn("ignoring invalid TLSENTINEL_SCANNER_MAX_CONCURRENCY",
+			"value", raw, "default", defaultMaxConcurrency)
+		return defaultMaxConcurrency
+	}
+	return n
+}
+
+// clampConcurrency caps the server-supplied value at the local ceiling. A
+// non-positive server value is passed through unchanged so runScanCycle can
+// apply its own default — the cap only pulls absurd values down, it does not
+// override a missing config.
+func clampConcurrency(server, ceiling int) int {
+	if server > 0 && server > ceiling {
+		return ceiling
+	}
+	return server
+}
 
 // buildClient loads env and returns a configured API client.
 // Shared by interactive mode (main) and service mode (service_windows.go).
@@ -66,11 +103,14 @@ func run(ctx context.Context, client *internal.APIClient) {
 		cfg, err = client.GetConfig(ctx)
 	}
 
+	maxConcurrency := loadMaxConcurrency()
+
 	slog.Info("scanner started",
 		"id", cfg.ID,
 		"name", cfg.Name,
 		"schedule", cfg.ScanCronExpression,
 		"concurrency", cfg.ScanConcurrency,
+		"max_concurrency", maxConcurrency,
 	)
 
 	// current holds the live config; mu protects it from concurrent access
@@ -91,8 +131,13 @@ func run(ctx context.Context, client *internal.APIClient) {
 		defer scanRunning.Store(false)
 
 		mu.Lock()
-		concurrency := current.ScanConcurrency
+		serverConcurrency := current.ScanConcurrency
 		mu.Unlock()
+		concurrency := clampConcurrency(serverConcurrency, maxConcurrency)
+		if concurrency != serverConcurrency && serverConcurrency > 0 {
+			slog.Warn("clamping server-supplied concurrency to local cap",
+				"requested", serverConcurrency, "cap", concurrency)
+		}
 		runScanCycle(ctx, client, concurrency)
 	}
 
